@@ -60,6 +60,10 @@ africa = ni.aggregate.aggregate(country, gdp, groups=ni.AFRICA_REGIONS, baseline
 - **Freeze.** `sigma_i`, `mu`, and the retained newspapers are saved as a JSON baseline (`Baseline.save`/`Baseline.load`); later months are scored against it and never recalibrated.
 - **Aggregate.** `z_ct = (EPU_ct - m_c) / s_c`; regional `Z_rt = sum(w_ct * z_ct)` with GDP-PPP weights; rescaled to `100 + 10 * standardised Z_rt`. The Africa series applies the same steps across all countries directly — it is not an average of the regional series.
 
+## Examples
+
+See [`examples/`](examples/) for a hand-labeled test dataset (`sample_articles.xlsx`) and two notebooks that run the full pipeline against it (`test_with_excel.ipynb`) and against the real Drive archive (`test_with_drive.ipynb`).
+
 ## Data
 
 - `data/eptu_country_keywords.json` — the production EPTU-2.0 keyword dictionary covering all 54 African countries (Economic, Policy, Trade, and Uncertainty term lists; `newsindex` uses the Economic/Policy/Uncertainty components for EPU). A term is matched only once it has been resolved against the other components, so the same literal phrase never satisfies two of them.
