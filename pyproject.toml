@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "newsindex"
+version = "0.1.0"
+description = "Build news-based Economic Policy Uncertainty (EPU) indices from newspaper archives."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Shakir Adeyemi Tewogbade" }]
+keywords = ["economic policy uncertainty", "epu", "news analytics", "africa"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = ["pandas>=1.5", "numpy>=1.23"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/CAPE-ERC/newsindex-library"
+Issues = "https://github.com/CAPE-ERC/newsindex-library/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
