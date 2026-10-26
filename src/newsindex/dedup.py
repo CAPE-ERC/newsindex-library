@@ -46,8 +46,7 @@ def canonical_url(url: object) -> str:
     return urlunsplit((scheme, netloc, path, query, ""))
 
 
-def _fallback_key(title: object, text: object) -> str:
-    blob = f"{normalize(title)}\x1f{normalize(text)}"
+def _hash_blob(blob: str) -> str:
     return "sha256:" + hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
@@ -70,9 +69,8 @@ def dedupe(
         return articles.copy()
 
     canonical = articles[url_col].map(canonical_url)
-    fallback = articles.apply(
-        lambda row: _fallback_key(row.get(title_col), row.get(text_col)), axis=1
-    )
+    blob = articles[title_col].map(normalize) + "\x1f" + articles[text_col].map(normalize)
+    fallback = blob.map(_hash_blob)
     dedup_key = canonical.where(canonical != "", fallback)
 
     working = articles.copy()

@@ -20,9 +20,33 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from collections.abc import Callable
+
+from . import dedup as _dedup
 from ._version import __version__
+from .articles import iter_country_month_batches
 from .dictionary import Dictionary
-from .match import is_epu
+from .match import component_pattern, loose_component_pattern, normalize
+
+
+def _component_survivors(text: pd.Series, terms: tuple[str, ...]) -> pd.Index:
+    """Rows of ``text`` whose article actually contains one of ``terms``.
+
+    Two-stage: :func:`newsindex.match.loose_component_pattern` first (cheap,
+    over-inclusive -- no word-boundary checks) to narrow down to candidates,
+    then :func:`newsindex.match.component_pattern` (the precise, boundary-
+    checked version) only on that narrowed subset. Equivalent to running the
+    precise pattern over ``text`` directly, just far cheaper when most rows
+    don't contain any of ``terms`` at all, since the expensive pattern then
+    only ever runs on the much smaller candidate subset.
+    """
+    if text.empty:
+        return text.index[:0]
+    candidates = text.index[text.str.contains(loose_component_pattern(terms), regex=True, na=False)]
+    if candidates.empty:
+        return candidates
+    precise_hits = text.loc[candidates].str.contains(component_pattern(terms), regex=True, na=False)
+    return candidates[precise_hits.to_numpy()]
 
 
 def count(
@@ -41,26 +65,128 @@ def count(
     :class:`KeyError` is raised naming any country that is not, since a
     missing country silently produces an undercount rather than a visible
     failure.
+
+    Classification is vectorized and short-circuits: per country, each
+    component (Economic, Policy, Uncertainty) is checked only against the
+    rows that survived the previous component, since EPU requires all
+    three. The classification itself uses a cheap prefilter before the
+    precise, word-boundary-checked pattern -- see
+    :func:`newsindex.match.loose_component_pattern`. Together this avoids
+    both the per-row/per-term Python loop and the full boundary-checked
+    regex cost on articles that plainly don't qualify, which is most of
+    them.
     """
     missing = sorted(set(articles[country_col]) - set(dictionary.countries))
     if missing:
         raise KeyError(f"countries missing from dictionary: {missing}")
 
-    def _is_epu(row: pd.Series) -> bool:
-        entry = dictionary[row[country_col]]
-        return is_epu(row[title_col], row[text_col], entry.economic, entry.policy, entry.uncertainty)
-
     working = articles.copy()
-    working["_is_epu"] = working.apply(_is_epu, axis=1)
+    raw_text = working[title_col].fillna("").astype(str) + " " + working[text_col].fillna("").astype(str)
+    normalized = raw_text.map(normalize)
+
+    is_epu_flags = pd.Series(False, index=working.index)
+    for country, rows in working.groupby(country_col, sort=False, observed=True).groups.items():
+        entry = dictionary[country]
+        survivors = rows
+        for terms in (entry.economic, entry.policy, entry.uncertainty):
+            if len(survivors) == 0:
+                break
+            survivors = _component_survivors(normalized.loc[survivors], terms)
+        is_epu_flags.loc[survivors] = True
+
+    working["_is_epu"] = is_epu_flags
     grouped = (
-        working.groupby([country_col, site_col, month_col])["_is_epu"]
+        working.groupby([country_col, site_col, month_col], sort=False, observed=True)["_is_epu"]
         .agg(epu_articles="sum", all_articles="count")
         .reset_index()
     )
     grouped = grouped.rename(
         columns={country_col: "country", site_col: "site", month_col: "year_month"}
     )
+    # Categorical dtypes (e.g. from read_articles()) are a memory optimization
+    # for the large per-article `working` table above; counts are already a
+    # tiny aggregate, and downstream code (fit_baseline, score, aggregate,
+    # ...) compares year_month with < / >=, which an unordered Categorical
+    # doesn't support -- so plain strings from here on.
+    for col in ("country", "site", "year_month"):
+        grouped[col] = grouped[col].astype(str)
     return grouped.sort_values(["country", "site", "year_month"]).reset_index(drop=True)
+
+
+def count_archive(
+    root: str | Path,
+    dictionary: Dictionary,
+    *,
+    countries: list[str] | str | None = None,
+    encoding: str = "utf-8",
+    dedupe: bool = True,
+    country_col: str = "country",
+    site_col: str = "site",
+    month_col: str = "year_month",
+    title_col: str = "title",
+    text_col: str = "text",
+    progress: Callable[[str], None] | None = None,
+) -> pd.DataFrame:
+    """Count EPU and total articles per country-site-month directly from an
+    article archive, without ever materializing the whole requested scope
+    in memory at once.
+
+    Equivalent to ``count(dedupe(read_articles(root, countries=countries)),
+    dictionary)`` with the default ``dedupe=True``, but processes one
+    (country, year-month) batch at a time -- see
+    :func:`newsindex.articles.iter_country_month_batches` -- discarding
+    each batch's raw article text as soon as it's been counted. Peak memory
+    stays close to the size of one country-month's articles, regardless of
+    how many countries, newspapers, or years ``root`` spans. This is what
+    :func:`newsindex.run_index` and :func:`newsindex.run_index_with_baseline`
+    use internally.
+
+    Deduplication happens within each (country, year-month folder) batch,
+    matching the archive's own month-folder organization -- equivalent to
+    deduplicating the whole requested scope at once, unless an article's
+    actual date disagrees with the month folder it's stored in, in which
+    case only within-batch duplicates are caught. Pass ``dedupe=False`` to
+    skip this and deduplicate the full table yourself instead, if that
+    distinction matters for your archive.
+
+    ``progress``, if given, is called with one short status line after each
+    batch (e.g. to print it) -- useful for a long run against a large
+    archive, so it's visible as working rather than looking stalled.
+    """
+    parts: list[pd.DataFrame] = []
+    for batch in iter_country_month_batches(root, countries=countries, encoding=encoding):
+        country = str(batch[country_col].iloc[0]) if len(batch) else "?"
+        months = sorted(str(m) for m in batch[month_col].unique()) if len(batch) else []
+        n_read = len(batch)
+
+        if dedupe:
+            batch = _dedup.dedupe(batch, url_col="url", title_col=title_col, text_col=text_col)
+        n_deduped = len(batch)
+
+        batch_counts = count(
+            batch,
+            dictionary,
+            country_col=country_col,
+            site_col=site_col,
+            month_col=month_col,
+            title_col=title_col,
+            text_col=text_col,
+        )
+        parts.append(batch_counts)
+
+        if progress is not None:
+            epu_total = int(batch_counts["epu_articles"].sum())
+            month_label = ",".join(months) if months else "?"
+            progress(
+                f"{country} {month_label}: {n_read:,} articles "
+                f"({n_deduped:,} after dedup), {epu_total:,} EPU"
+            )
+
+    combined = pd.concat(parts, ignore_index=True)
+    result = combined.groupby(["country", "site", "year_month"], as_index=False)[
+        ["epu_articles", "all_articles"]
+    ].sum()
+    return result.sort_values(["country", "site", "year_month"]).reset_index(drop=True)
 
 
 @dataclass(frozen=True)

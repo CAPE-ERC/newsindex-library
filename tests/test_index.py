@@ -1,9 +1,12 @@
+import gzip
+import json
 import math
+from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from newsindex import dictionary, index
+from newsindex import dedup, dictionary, index, read_articles
 
 
 def test_count_counts_epu_and_total_articles_per_site_month(tmp_path):
@@ -166,3 +169,112 @@ def test_baseline_save_and_load_round_trip(tmp_path):
     assert reloaded.sigma == baseline.sigma
     assert reloaded.dictionary_fingerprint == "abc123"
     assert math.isclose(reloaded.mu["Freedonia"], 2.0)
+
+
+def _write_count_archive_dictionary(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "countries": {
+                    "Nigeria": {
+                        "languages": ["en"],
+                        "ECONOMY_TERMS": ["fiscal", "inflation"],
+                        "POLICY_TERMS": ["government"],
+                        "UNCERTAINTY_TERMS": ["uncertainty"],
+                    },
+                    "Kenya": {
+                        "languages": ["en"],
+                        "ECONOMY_TERMS": ["fiscal", "inflation"],
+                        "POLICY_TERMS": ["government"],
+                        "UNCERTAINTY_TERMS": ["uncertain"],
+                    },
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_count_archive_articles(path: Path, rows: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    body = "site,date,title,url,text\n" + "\n".join(rows)
+    with gzip.open(path, "wt", encoding="utf-8") as handle:
+        handle.write(body)
+
+
+def _build_count_archive(root: Path) -> None:
+    _write_count_archive_articles(
+        root / "Nigeria" / "The Punch" / "2020-01" / "articles_The Punch_2020-01.csv.gz",
+        [
+            'The Punch,2020-01-01,"Government fiscal policy creates uncertainty",https://x/n1,body',
+            'The Punch,2020-01-02,"Government fiscal policy creates uncertainty",https://x/n1,body',  # duplicate URL
+            "The Punch,2020-01-03,Local football result,https://x/n2,body",
+        ],
+    )
+    _write_count_archive_articles(
+        root / "Nigeria" / "Vanguard" / "2020-01" / "articles_Vanguard_2020-01.csv.gz",
+        ['Vanguard,2020-01-04,"Inflation and government uncertainty rise",https://x/n3,body'],
+    )
+    _write_count_archive_articles(
+        root / "Nigeria" / "The Punch" / "2020-02" / "articles_The Punch_2020-02.csv.gz",
+        ["The Punch,2020-02-01,Weather update,https://x/n4,body"],
+    )
+    _write_count_archive_articles(
+        root / "Kenya" / "Daily Nation" / "2020-01" / "articles_Daily Nation_2020-01.csv.gz",
+        ['Daily Nation,2020-01-05,"Government fiscal plan uncertain economy",https://x/k1,body'],
+    )
+
+
+def test_count_archive_matches_count_dedupe_read_articles(tmp_path):
+    _build_count_archive(tmp_path / "archive")
+    dict_path = tmp_path / "dict.json"
+    _write_count_archive_dictionary(dict_path)
+    kw = dictionary.load(dict_path)
+
+    streamed = index.count_archive(tmp_path / "archive", kw)
+    whole = index.count(dedup.dedupe(read_articles(tmp_path / "archive")), kw)
+
+    sort_cols = ["country", "site", "year_month"]
+    pd.testing.assert_frame_equal(
+        streamed.sort_values(sort_cols).reset_index(drop=True),
+        whole.sort_values(sort_cols).reset_index(drop=True),
+    )
+
+
+def test_count_archive_dedupe_false_counts_duplicates_separately(tmp_path):
+    _build_count_archive(tmp_path / "archive")
+    dict_path = tmp_path / "dict.json"
+    _write_count_archive_dictionary(dict_path)
+    kw = dictionary.load(dict_path)
+
+    deduped = index.count_archive(tmp_path / "archive", kw, dedupe=True)
+    raw = index.count_archive(tmp_path / "archive", kw, dedupe=False)
+
+    punch_deduped = deduped[(deduped["country"] == "Nigeria") & (deduped["site"] == "The Punch")]
+    punch_raw = raw[(raw["country"] == "Nigeria") & (raw["site"] == "The Punch")]
+    assert int(punch_raw["all_articles"].sum()) == int(punch_deduped["all_articles"].sum()) + 1
+
+
+def test_count_archive_countries_filters(tmp_path):
+    _build_count_archive(tmp_path / "archive")
+    dict_path = tmp_path / "dict.json"
+    _write_count_archive_dictionary(dict_path)
+    kw = dictionary.load(dict_path)
+
+    result = index.count_archive(tmp_path / "archive", kw, countries=["nigeria"])
+
+    assert set(result["country"]) == {"Nigeria"}
+
+
+def test_count_archive_calls_progress_once_per_batch(tmp_path):
+    _build_count_archive(tmp_path / "archive")
+    dict_path = tmp_path / "dict.json"
+    _write_count_archive_dictionary(dict_path)
+    kw = dictionary.load(dict_path)
+
+    messages: list[str] = []
+    index.count_archive(tmp_path / "archive", kw, progress=messages.append)
+
+    # Nigeria/2020-01 (2 newspapers), Nigeria/2020-02, Kenya/2020-01
+    assert len(messages) == 3
+    assert any("Nigeria" in m and "2020-01" in m for m in messages)
