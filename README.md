@@ -2,7 +2,7 @@
 
 A Python library for building news-based Economic Policy Uncertainty (EPU) indices from newspaper archives, implementing the method behind the CAPE Africa EPU Index (Baker, Bloom and Davis, 2016, adapted for multilingual African press).
 
-`newsindex` turns a collection of newspaper articles into monthly country, regional, and Africa-wide EPU series: classify articles, deduplicate them, fit a frozen baseline, score new months against it, and aggregate country series into GDP-PPP-weighted regional indices. Every number can be traced back to a documented function and its inputs.
+`newsindex` turns a collection of newspaper articles into monthly country, regional, and Africa-wide EPU series: classify articles, deduplicate them, fit a frozen baseline, score new months against it, and aggregate country series into weighted regional indices (GDP-PPP by default, or a weight table or function of your own). Every number can be traced back to a documented function and its inputs.
 
 ## Scope (v1.0)
 
@@ -74,7 +74,7 @@ africa = ni.aggregate.aggregate(country, gdp, groups=ni.AFRICA_REGIONS, baseline
 | `dictionary` | Load and validate country keyword files; enforce disjoint components; produce an audit and a fingerprint | `load()`, `validate()`, `fingerprint()` |
 | `dedup` | Remove duplicate articles within a country-month by canonical URL, or by title/text when the URL is missing | `canonical_url()`, `dedupe()` |
 | `index` | Count EPU articles per newspaper-month; compute a single-window index, or fit a frozen baseline and score later windows against it | `count()`, `compute_index()`, `fit_baseline()`, `score()`, `score_windows()` |
-| `aggregate` | Country z-scores, GDP weights, regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
+| `aggregate` | Country z-scores, weighting (GDP-PPP by default, or your own table/function), regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
 
 `newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
 
@@ -136,7 +136,7 @@ For the full 249-row table, call `countries()` or see [`data/countries.csv`](dat
 - **Standardise.** `N_it = S_it / sigma_i`, where `sigma_i` is the newspaper's population standard deviation over the baseline window. The window is always chosen by the caller (the published CAPE Africa EPU index uses 2015-01 to 2025-12; the library has no hardcoded default).
 - **Average and normalise.** `M_t` is the mean of `N_it` across newspapers; `EPU_t = 100 * M_t / mu`, where `mu` is the baseline mean of `M_t`.
 - **Freeze.** `sigma_i`, `mu`, and the retained newspapers are saved as a JSON baseline (`Baseline.save`/`Baseline.load`); later months are scored against it and never recalibrated.
-- **Aggregate.** `z_ct = (EPU_ct - m_c) / s_c`; regional `Z_rt = sum(w_ct * z_ct)` with GDP-PPP weights; rescaled to `100 + 10 * standardised Z_rt`. The Africa series applies the same steps across all countries directly — it is not an average of the regional series.
+- **Aggregate.** `z_ct = (EPU_ct - m_c) / s_c`; regional `Z_rt = sum(w_ct * z_ct)`, with weights `w_ct` GDP-PPP by default (or any table/function you supply, see below); rescaled to `100 + 10 * standardised Z_rt`. The Africa series applies the same steps across all countries directly — it is not an average of the regional series.
 
 ### Two ways to compute an index
 
@@ -147,6 +147,22 @@ For the full 249-row table, call `countries()` or see [`data/countries.csv`](dat
   later = ni.index.score_windows(counts, baseline, windows=[("2025-01", "2025-12")])
   ```
   `score_windows` just calls `score()` once per `(start, end)` pair and tags each result with a `window` column; `score(counts, baseline)` alone is equivalent when you only need one later window and don't need that column.
+
+### Weighting regional aggregation
+
+`aggregate.aggregate`'s `weights` argument isn't locked to GDP-PPP. It accepts either:
+
+- **A table** — `country`/`year_month`/value columns, like `monthly_gdp()`'s output. Use `weight_col` if the value column isn't named `"gdp"` (e.g. a population or trade-volume table you built yourself). Only countries present in the table are included, and within each group-month they're weighted by their share of the group's total.
+- **A function** — `weights(month_rows, group_name) -> pandas.Series`, called once per group per month with that month's rows (`country`, `z`, …) and the group's name; return a non-negative weight per row. Weights don't need to be pre-normalised, so equal weighting is just `lambda rows, group: pandas.Series(1.0, index=rows.index)`.
+
+```python
+population = pd.DataFrame({"country": [...], "year_month": [...], "population": [...]})
+by_population = ni.aggregate.aggregate(country, population, weight_col="population")
+
+equal_weighted = ni.aggregate.aggregate(country, lambda rows, group: pd.Series(1.0, index=rows.index))
+```
+
+`monthly_gdp()` itself also accepts an in-memory DataFrame in place of a file path (`source` argument), for a weight table that isn't on disk as annual-GDP-shaped CSV — any annual by-country metric, not just GDP, interpolates the same way.
 
 ## Examples
 
