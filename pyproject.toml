@@ -31,6 +31,9 @@ Issues = "https://github.com/CAPE-ERC/newsindex-library/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+newsindex = ["data/*.csv"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

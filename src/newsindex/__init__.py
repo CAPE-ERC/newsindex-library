@@ -10,6 +10,7 @@ from . import aggregate, dedup, dictionary, index, match
 from ._version import __version__
 from .aggregate import AFRICA_REGIONS
 from .articles import read_articles
+from .countries import countries
 
 __all__ = [
     "__version__",
@@ -19,5 +20,6 @@ __all__ = [
     "index",
     "aggregate",
     "read_articles",
+    "countries",
     "AFRICA_REGIONS",
 ]
