@@ -23,16 +23,47 @@ def _unescape(value: object) -> object:
     return html.unescape(value)
 
 
-def read_articles(root: str | Path, *, encoding: str = "utf-8") -> pd.DataFrame:
+def read_articles(
+    root: str | Path, *, countries: list[str] | str | None = None, encoding: str = "utf-8"
+) -> pd.DataFrame:
     """Read every ``articles_*.csv`` / ``articles_*.csv.gz`` file under
     ``root`` into one table, adding ``country`` (the top-level folder name)
     and ``year_month`` (the first seven characters of ``date``) columns.
+
+    ``countries`` restricts which top-level country folders are read:
+    ``None`` or ``"all"`` (the default) reads every folder under ``root``;
+    a list reads only the named folders (matched case-insensitively
+    against the folder names actually present, since archive folder names
+    don't always match a dictionary's or :func:`newsindex.countries`'
+    casing). An unmatched name raises :class:`ValueError` listing the
+    folders that were found, to catch typos early.
 
     Article titles and text are HTML-unescaped (the scraper stores raw HTML
     entities such as ``&#8217;``) before they reach :mod:`newsindex.match`.
     """
     root = Path(root)
-    files = sorted({*root.glob("**/*.csv.gz"), *root.glob("**/*.csv")})
+    available = sorted(p.name for p in root.iterdir() if p.is_dir())
+
+    if countries is None or countries == "all":
+        selected = available
+    else:
+        by_lower = {name.lower(): name for name in available}
+        selected, missing = [], []
+        for name in countries:
+            match = by_lower.get(name.lower())
+            (selected if match else missing).append(match or name)
+        if missing:
+            raise ValueError(
+                f"country folder(s) not found under {root}: {missing}. "
+                f"Available: {available}"
+            )
+
+    files: list[Path] = []
+    for country in selected:
+        country_root = root / country
+        files.extend(country_root.glob("**/*.csv.gz"))
+        files.extend(country_root.glob("**/*.csv"))
+    files = sorted(set(files))
     if not files:
         raise FileNotFoundError(f"no article files found under {root}")
 

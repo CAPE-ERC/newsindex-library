@@ -22,6 +22,33 @@ pip install -e .
 
 Requires Python 3.10+. The only runtime dependencies are `pandas` and `numpy`.
 
+## Quick start
+
+`run_index`/`run_index_with_baseline` wrap reading, deduplicating, counting, and scoring into a single call, for anyone who just wants an index out of an article archive without assembling the pipeline by hand:
+
+```python
+import newsindex as ni
+
+# No baseline: one window, fit and scored in-sample.
+country = ni.run_index(
+    "Scrapped_Top_Articles/", "data/eptu_country_keywords.json", start="2020-01", end="2020-12"
+)
+
+# With baseline: freeze 2015-2024, then score 2025 against it.
+country, baseline = ni.run_index_with_baseline(
+    "Scrapped_Top_Articles/",
+    "data/eptu_country_keywords.json",
+    windows=[("2025-01", "2025-12")],
+    baseline_start="2015-01",
+    baseline_end="2024-12",
+)
+baseline.save("baseline_2015_2024.json")  # reuse next run: pass baseline=... instead of baseline_start/end
+```
+
+Both print progress to stderr by default (`verbose=False` to silence) and accept `countries=[...]` to read only some of the archive's country folders (default: every folder; folder names are matched case-insensitively). Neither function has a bundled default dictionary -- `dictionary_path` is always an explicit argument, since this library ships no proprietary keyword data.
+
+These two calls are thin compositions of `read_articles()`, `dedup.dedupe()`, `index.count()`, and `index.compute_index()`/`index.fit_baseline()`+`index.score_windows()` -- reach for those directly (see Usage below) for anything a single call can't express, e.g. inspecting the deduplicated article table or reusing one count table across several baseline windows.
+
 ## Usage
 
 ```python
@@ -49,7 +76,7 @@ africa = ni.aggregate.aggregate(country, gdp, groups=ni.AFRICA_REGIONS, baseline
 | `index` | Count EPU articles per newspaper-month; compute a single-window index, or fit a frozen baseline and score later windows against it | `count()`, `compute_index()`, `fit_baseline()`, `score()`, `score_windows()` |
 | `aggregate` | Country z-scores, GDP weights, regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
 
-`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
+`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
 
 ## Countries
 
