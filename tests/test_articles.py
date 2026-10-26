@@ -35,3 +35,43 @@ def test_read_articles_walks_country_newspaper_month_layout_and_unescapes_html(t
 def test_read_articles_raises_when_nothing_found(tmp_path):
     with pytest.raises(FileNotFoundError):
         read_articles(tmp_path)
+
+
+def test_read_articles_countries_filters_to_the_named_folders(tmp_path):
+    _write_articles(
+        tmp_path / "Nigeria" / "The Punch" / "2026-03" / "articles_The Punch_2026-03.csv.gz",
+        ['The Punch,2026-03-01,Headline,https://example.com/a,Text'],
+    )
+    _write_articles(
+        tmp_path / "Kenya" / "Daily Nation" / "2026-03" / "articles_Daily Nation_2026-03.csv.gz",
+        ['Daily Nation,2026-03-02,Economy grows,https://example.com/b,More text'],
+    )
+
+    articles = read_articles(tmp_path, countries=["nigeria"])  # case-insensitive match
+
+    assert set(articles["country"]) == {"Nigeria"}
+
+
+def test_read_articles_countries_all_reads_every_folder(tmp_path):
+    _write_articles(
+        tmp_path / "Nigeria" / "The Punch" / "2026-03" / "articles_The Punch_2026-03.csv.gz",
+        ['The Punch,2026-03-01,Headline,https://example.com/a,Text'],
+    )
+    _write_articles(
+        tmp_path / "Kenya" / "Daily Nation" / "2026-03" / "articles_Daily Nation_2026-03.csv.gz",
+        ['Daily Nation,2026-03-02,Economy grows,https://example.com/b,More text'],
+    )
+
+    articles = read_articles(tmp_path, countries="all")
+
+    assert set(articles["country"]) == {"Nigeria", "Kenya"}
+
+
+def test_read_articles_countries_raises_on_unknown_folder(tmp_path):
+    _write_articles(
+        tmp_path / "Nigeria" / "The Punch" / "2026-03" / "articles_The Punch_2026-03.csv.gz",
+        ['The Punch,2026-03-01,Headline,https://example.com/a,Text'],
+    )
+
+    with pytest.raises(ValueError, match="Ghana"):
+        read_articles(tmp_path, countries=["Nigeria", "Ghana"])
