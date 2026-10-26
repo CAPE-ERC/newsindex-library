@@ -1,3 +1,5 @@
+import pandas as pd
+
 import newsindex as ni
 
 
@@ -20,6 +22,14 @@ def test_countries_codes_are_unique_and_well_formed():
     assert table["iso3"].str.len().eq(3).all()
     assert table["iso2"].is_unique
     assert table["iso3"].is_unique
+
+
+def test_countries_does_not_treat_namibias_iso2_code_na_as_missing():
+    # Namibia's ISO 3166-1 alpha-2 code is literally "NA" -- a classic CSV
+    # footgun if the reader's default missing-value strings aren't disabled.
+    table = ni.countries().set_index("iso3")
+    assert table.loc["NAM", "iso2"] == "NA"
+    assert not pd.isna(table.loc["NAM", "iso2"])
 
 
 def test_countries_spot_check_known_entries():
