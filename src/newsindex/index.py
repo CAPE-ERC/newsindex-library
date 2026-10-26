@@ -185,3 +185,42 @@ def score(counts: pd.DataFrame, baseline: Baseline) -> pd.DataFrame:
             )
     result = pd.DataFrame(rows, columns=["country", "year_month", "EPU", "M_t", "mu", "n_sites"])
     return result.sort_values(["country", "year_month"]).reset_index(drop=True)
+
+
+def compute_index(counts: pd.DataFrame, start: str, end: str) -> pd.DataFrame:
+    """Compute an in-sample index over a single window (the no-baseline variant).
+
+    Fits ``sigma``/``mu`` from ``[start, end]`` and scores that same window
+    against them; nothing is frozen or reused for a later period. Equivalent
+    to ``score(window, fit_baseline(window, start, end))`` where ``window``
+    is ``counts`` restricted to ``[start, end]``, but callers never see or
+    manage a :class:`Baseline`.
+    """
+    window = counts[(counts["year_month"] >= start) & (counts["year_month"] <= end)]
+    baseline = fit_baseline(window, start, end)
+    return score(window, baseline)
+
+
+def score_windows(
+    counts: pd.DataFrame, baseline: Baseline, windows: list[tuple[str, str]]
+) -> pd.DataFrame:
+    """Score one or more later windows against a frozen baseline (the
+    with-baseline variant).
+
+    ``windows`` is a list of inclusive ``(start, end)`` ``"YYYY-MM"`` pairs,
+    typically just one period that follows the baseline window, but any
+    number may be given; they may also overlap or leave gaps between them.
+    The result adds a ``window`` column (``"start:end"``) identifying which
+    pair produced each row.
+    """
+    parts: list[pd.DataFrame] = []
+    for start, end in windows:
+        window_counts = counts[(counts["year_month"] >= start) & (counts["year_month"] <= end)]
+        scored = score(window_counts, baseline)
+        scored = scored.assign(window=f"{start}:{end}")
+        parts.append(scored)
+    columns = ["window", "country", "year_month", "EPU", "M_t", "mu", "n_sites"]
+    if not parts:
+        return pd.DataFrame(columns=columns)
+    result = pd.concat(parts, ignore_index=True)
+    return result[columns].sort_values(["window", "country", "year_month"]).reset_index(drop=True)
