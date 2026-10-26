@@ -12,6 +12,7 @@ use ASCII word-boundary conventions.
 from __future__ import annotations
 
 import functools
+import math
 import re
 import unicodedata
 from typing import Iterable, Mapping, Sequence
@@ -29,13 +30,19 @@ _DASHES = str.maketrans(
 )
 
 
+def is_missing(value: object) -> bool:
+    """True for ``None`` and for float NaN (e.g. a missing value read from a
+    pandas column), the two ways "no value" shows up in article data."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
 def normalize(value: object) -> str:
     """Return stable Unicode text used for both dictionary terms and articles.
 
     Applies Unicode NFKC normalization, folds apostrophe and dash variants to
     a single form, collapses whitespace, and case-folds the result.
     """
-    text = "" if value is None else str(value)
+    text = "" if is_missing(value) else str(value)
     text = unicodedata.normalize("NFKC", text).translate(_APOSTROPHES).translate(_DASHES)
     return re.sub(r"\s+", " ", text).casefold().strip()
 
@@ -95,7 +102,7 @@ def component_matches(
     title: object, body: object, components: Mapping[str, Sequence[str]]
 ) -> dict[str, bool]:
     """Return, for each named component, whether any of its terms occur."""
-    full_text = f"{'' if title is None else title} {'' if body is None else body}"
+    full_text = f"{'' if is_missing(title) else title} {'' if is_missing(body) else body}"
     normalized = normalize(full_text)
     return {
         name: any(

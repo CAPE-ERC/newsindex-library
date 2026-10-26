@@ -46,7 +46,7 @@ africa = ni.aggregate.aggregate(country, gdp, groups=ni.AFRICA_REGIONS, baseline
 | `match` | Normalize text (Unicode NFKC, case-fold, quotes, dashes) and match whole words/phrases in any script | `normalize()`, `find_terms()`, `is_epu()` |
 | `dictionary` | Load and validate country keyword files; enforce disjoint components; produce an audit and a fingerprint | `load()`, `validate()`, `fingerprint()` |
 | `dedup` | Remove duplicate articles within a country-month by canonical URL, or by title/text when the URL is missing | `canonical_url()`, `dedupe()` |
-| `index` | Count EPU articles per newspaper-month, fit the frozen baseline, score new months | `count()`, `fit_baseline()`, `score()` |
+| `index` | Count EPU articles per newspaper-month; compute a single-window index, or fit a frozen baseline and score later windows against it | `count()`, `compute_index()`, `fit_baseline()`, `score()`, `score_windows()` |
 | `aggregate` | Country z-scores, GDP weights, regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
 
 `newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives.
@@ -55,10 +55,20 @@ africa = ni.aggregate.aggregate(country, gdp, groups=ni.AFRICA_REGIONS, baseline
 
 - **Classify.** An article counts as EPU if its title or body contains at least one Economic, one Policy, and one Uncertainty term from its country's dictionary. A term belongs to one component only.
 - **Scale.** `S_it = EPU articles_it / all articles_it` for newspaper *i* in month *t*.
-- **Standardise.** `N_it = S_it / sigma_i`, where `sigma_i` is the newspaper's population standard deviation over the baseline window (default 2015-01 to 2025-12).
+- **Standardise.** `N_it = S_it / sigma_i`, where `sigma_i` is the newspaper's population standard deviation over the baseline window. The window is always chosen by the caller (the published CAPE Africa EPU index uses 2015-01 to 2025-12; the library has no hardcoded default).
 - **Average and normalise.** `M_t` is the mean of `N_it` across newspapers; `EPU_t = 100 * M_t / mu`, where `mu` is the baseline mean of `M_t`.
 - **Freeze.** `sigma_i`, `mu`, and the retained newspapers are saved as a JSON baseline (`Baseline.save`/`Baseline.load`); later months are scored against it and never recalibrated.
 - **Aggregate.** `z_ct = (EPU_ct - m_c) / s_c`; regional `Z_rt = sum(w_ct * z_ct)` with GDP-PPP weights; rescaled to `100 + 10 * standardised Z_rt`. The Africa series applies the same steps across all countries directly — it is not an average of the regional series.
+
+### Two ways to compute an index
+
+- **No baseline (`compute_index`).** One window. `sigma`/`mu` are fit *from* that window and used to score that same window — nothing is frozen or reused. `ni.index.compute_index(counts, start="2020-01", end="2020-12")`.
+- **With baseline (`fit_baseline` + `score` / `score_windows`).** Two or more windows. The first window is frozen once (`fit_baseline`); any later window (or several) is scored against that frozen baseline, never refitting it:
+  ```python
+  baseline = ni.index.fit_baseline(counts, start="2015-01", end="2024-12")
+  later = ni.index.score_windows(counts, baseline, windows=[("2025-01", "2025-12")])
+  ```
+  `score_windows` just calls `score()` once per `(start, end)` pair and tags each result with a `window` column; `score(counts, baseline)` alone is equivalent when you only need one later window and don't need that column.
 
 ## Examples
 

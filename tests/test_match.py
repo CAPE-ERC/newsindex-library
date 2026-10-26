@@ -10,6 +10,21 @@ def test_normalize_handles_none_and_non_strings():
     assert match.normalize(42) == "42"
 
 
+def test_normalize_handles_float_nan_like_none():
+    # float NaN is how a missing pandas cell can surface (e.g. a title or
+    # body column with some blank rows); it must not be stringified into
+    # the literal text "nan".
+    assert match.normalize(float("nan")) == ""
+
+
+def test_is_epu_treats_missing_title_or_body_as_empty_not_literal_nan():
+    economic, policy, uncertainty = ["economy"], ["government"], ["uncertainty"]
+    assert not match.is_epu(float("nan"), "", economic, policy, uncertainty)
+    assert match.is_epu(
+        "Government economy uncertainty", float("nan"), economic, policy, uncertainty
+    )
+
+
 def test_short_abbreviations_do_not_match_inside_words():
     assert not match.any_term_matches("Each country acts", ["EAC"])
     assert not match.any_term_matches("The newcomer arrived", ["OMC"])

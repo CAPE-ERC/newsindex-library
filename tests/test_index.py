@@ -113,6 +113,48 @@ def test_score_matches_hand_computed_epu_and_freezes_dropped_sites():
     assert scored.loc["2020-05", "n_sites"] == 1
 
 
+def test_compute_index_is_in_sample_fit_and_score_for_one_window():
+    counts = _hand_computed_counts()
+    result = index.compute_index(counts, "2020-01", "2020-04").set_index("year_month")
+
+    # Same numbers as fit_baseline+score over the identical window: sigma and
+    # mu are fit from (and only from) this one window, then it is scored
+    # against itself -- nothing is frozen or reused.
+    assert result.loc["2020-01", "EPU"] == pytest.approx(50.0)
+    assert result.loc["2020-02", "EPU"] == pytest.approx(150.0)
+    # The post-baseline 2020-05 row exists in counts but is outside this
+    # single window, so it must not appear in the result.
+    assert "2020-05" not in result.index
+
+
+def test_score_windows_scores_multiple_named_periods_against_one_frozen_baseline():
+    counts = pd.concat(
+        [
+            _hand_computed_counts(),
+            pd.DataFrame(
+                [{"country": "Freedonia", "site": "SiteA", "year_month": "2020-06", "epu_articles": 1, "all_articles": 10}]
+            ),
+        ],
+        ignore_index=True,
+    )
+    baseline = index.fit_baseline(counts, "2020-01", "2020-04")
+
+    result = index.score_windows(counts, baseline, windows=[("2020-05", "2020-05"), ("2020-06", "2020-06")])
+    result = result.set_index(["window", "year_month"])
+
+    assert result.loc[("2020-05:2020-05", "2020-05"), "EPU"] == pytest.approx(150.0)
+    assert result.loc[("2020-06:2020-06", "2020-06"), "EPU"] == pytest.approx(50.0)
+    assert set(result.index.get_level_values("window")) == {"2020-05:2020-05", "2020-06:2020-06"}
+
+
+def test_score_windows_with_no_windows_returns_empty_frame_with_expected_columns():
+    counts = _hand_computed_counts()
+    baseline = index.fit_baseline(counts, "2020-01", "2020-04")
+    result = index.score_windows(counts, baseline, windows=[])
+    assert list(result.columns) == ["window", "country", "year_month", "EPU", "M_t", "mu", "n_sites"]
+    assert len(result) == 0
+
+
 def test_baseline_save_and_load_round_trip(tmp_path):
     counts = _hand_computed_counts()
     baseline = index.fit_baseline(counts, "2020-01", "2020-04", dictionary_fingerprint="abc123")
