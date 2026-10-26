@@ -12,7 +12,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import pandas as pd
 
-from .match import normalize
+from .match import is_missing, normalize
 
 _TRACKING_PARAMS = {
     "utm_source",
@@ -30,7 +30,7 @@ _TRACKING_PARAMS = {
 def canonical_url(url: object) -> str:
     """Normalize a URL for deduplication: lower-cased scheme/host, no
     fragment, no tracking query parameters, no trailing slash."""
-    text = "" if url is None else str(url).strip()
+    text = "" if is_missing(url) else str(url).strip()
     if not text:
         return ""
     parts = urlsplit(text)

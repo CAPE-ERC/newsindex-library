@@ -13,6 +13,11 @@ def test_canonical_url_handles_missing_url():
     assert dedup.canonical_url(None) == ""
     assert dedup.canonical_url("") == ""
     assert dedup.canonical_url("   ") == ""
+    # float NaN is how pandas represents a missing value in many cases (e.g.
+    # a column built from a list containing None can upcast it to NaN
+    # depending on pandas version); it must be treated the same as None, not
+    # stringified into the literal text "nan".
+    assert dedup.canonical_url(float("nan")) == ""
 
 
 def test_dedupe_collapses_shared_canonical_url_within_group():
@@ -40,6 +45,22 @@ def test_dedupe_falls_back_to_title_and_text_hash_when_url_missing():
             "country": ["Kenya", "Kenya"],
             "year_month": ["2026-01", "2026-01"],
             "url": [None, ""],
+            "title": ["Same story", "Same story"],
+            "text": ["identical body", "identical body"],
+        }
+    )
+    result = dedup.dedupe(articles)
+    assert len(result) == 1
+
+
+def test_dedupe_falls_back_when_url_is_float_nan():
+    # Explicit float NaN rather than relying on pandas' version-dependent
+    # None -> NaN upcasting in a list-constructed column.
+    articles = pd.DataFrame(
+        {
+            "country": ["Kenya", "Kenya"],
+            "year_month": ["2026-01", "2026-01"],
+            "url": pd.Series([float("nan"), ""], dtype="object"),
             "title": ["Same story", "Same story"],
             "text": ["identical body", "identical body"],
         }
