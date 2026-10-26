@@ -1,8 +1,9 @@
-"""Country z-scores, GDP weights, and regional / Africa aggregation.
+"""Country z-scores, weighting, and regional / Africa aggregation.
 
 Implements the four computation steps from the CAPE Africa EPU methodology:
 standardise each country's index against its own baseline, weight by
-within-group GDP-PPP share, take the GDP-weighted average of country
+within-group share (GDP-PPP by default, or any table or custom weighting
+function -- see :func:`aggregate`), take the weighted average of country
 z-scores, and rescale the result to a baseline mean of 100 and standard
 deviation of 10. The Africa aggregate applies the same four steps across all
 countries directly; it is not an average of the regional series.
@@ -10,6 +11,7 @@ countries directly; it is not an average of the regional series.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import numpy as np
@@ -96,7 +98,7 @@ DEFAULT_COUNTRY_ALIASES: dict[str, str] = {
 
 
 def monthly_gdp(
-    path: str | Path,
+    source: str | Path | pd.DataFrame,
     *,
     country_col: str = "Country",
     year_col: str = "Year",
@@ -105,7 +107,12 @@ def monthly_gdp(
     end: str | None = None,
     aliases: dict[str, str] | None = None,
 ) -> pd.DataFrame:
-    """Interpolate annual GDP-PPP to monthly values.
+    """Interpolate annual GDP-PPP (or any other annual-by-country metric) to
+    monthly values.
+
+    ``source`` is either a path to a CSV file or an already-loaded
+    DataFrame, with ``country_col``, ``year_col``, and ``value_col``
+    columns.
 
     Each annual value is placed at 1 January of its year and interpolated
     linearly in logarithms through the next year's figure. After a
@@ -116,7 +123,7 @@ def monthly_gdp(
     to convert a billions-denominated source file to millions.
     """
     aliases = DEFAULT_COUNTRY_ALIASES if aliases is None else aliases
-    raw = pd.read_csv(path)
+    raw = source.copy() if isinstance(source, pd.DataFrame) else pd.read_csv(source)
     raw[country_col] = raw[country_col].map(lambda c: aliases.get(c, c))
 
     rows: list[dict] = []
@@ -167,20 +174,35 @@ def _population_stats(series: pd.Series) -> tuple[float, float]:
 
 def aggregate(
     country_index: pd.DataFrame,
-    gdp: pd.DataFrame,
+    weights: pd.DataFrame | Callable[[pd.DataFrame, str], pd.Series],
     groups: dict[str, list[str]] = AFRICA_REGIONS,
     *,
+    weight_col: str = "gdp",
     baseline=None,
     baseline_start: str = "2015-01",
     baseline_end: str = "2025-12",
     include_africa: bool = True,
 ) -> pd.DataFrame:
-    """GDP-PPP-weighted regional (and, by default, Africa-wide) EPU series.
+    """Weighted regional (and, by default, Africa-wide) EPU series.
 
     ``country_index`` must have ``country``, ``year_month``, and ``EPU``
-    columns (as produced by :func:`newsindex.index.score`); ``gdp`` must have
-    ``country``, ``year_month``, and ``gdp`` columns (as produced by
-    :func:`monthly_gdp`).
+    columns (as produced by :func:`newsindex.index.score`).
+
+    ``weights`` controls how countries are combined within each group, and
+    is either:
+
+    - A DataFrame with ``country``, ``year_month``, and a weight-value
+      column (``weight_col``, default ``"gdp"`` -- the column name
+      produced by :func:`monthly_gdp`). Only countries present in this
+      table are included. Within each group and month, countries are
+      weighted by their share of the group's total.
+    - A callable ``weights(month_rows, group_name) -> pandas.Series``,
+      called once per group per month with that month's rows for the
+      group (columns include ``country`` and ``z``) and the group's name,
+      returning a non-negative weight per row (aligned to
+      ``month_rows.index``). Weights don't need to be pre-normalised --
+      they are divided by their own sum -- so e.g. equal weighting is
+      ``lambda rows, group: pandas.Series(1.0, index=rows.index)``.
 
     Pass the :class:`newsindex.index.Baseline` used to score ``country_index``
     as ``baseline`` to reuse its window instead of repeating
@@ -188,7 +210,10 @@ def aggregate(
     """
     if baseline is not None:
         baseline_start, baseline_end = baseline.start, baseline.end
-    merged = country_index.merge(gdp, on=["country", "year_month"], how="inner")
+    if callable(weights):
+        merged = country_index.copy()
+    else:
+        merged = country_index.merge(weights, on=["country", "year_month"], how="inner")
 
     baseline_window = merged[
         (merged["year_month"] >= baseline_start) & (merged["year_month"] <= baseline_end)
@@ -214,10 +239,11 @@ def aggregate(
     for group_name, members in all_groups.items():
         group_data = merged[merged["country"].isin(members)]
         for year_month, month_rows in group_data.groupby("year_month"):
-            total_gdp = month_rows["gdp"].sum()
-            if total_gdp <= 0:
+            raw_weight = weights(month_rows, group_name) if callable(weights) else month_rows[weight_col]
+            total_weight = raw_weight.sum()
+            if total_weight <= 0:
                 continue
-            weight = month_rows["gdp"] / total_gdp
+            weight = raw_weight / total_weight
             z_weighted = float((weight * month_rows["z"]).sum())
             group_rows.append(
                 {
@@ -225,11 +251,11 @@ def aggregate(
                     "year_month": year_month,
                     "Z": z_weighted,
                     "n_countries": int(month_rows["country"].nunique()),
-                    "gdp_covered": float(total_gdp),
+                    "weight_covered": float(total_weight),
                 }
             )
 
-    regional = pd.DataFrame(group_rows, columns=["group", "year_month", "Z", "n_countries", "gdp_covered"])
+    regional = pd.DataFrame(group_rows, columns=["group", "year_month", "Z", "n_countries", "weight_covered"])
     if regional.empty:
         return regional.rename(columns={"Z": "z"}).assign(index=pd.Series(dtype=float))
 
@@ -249,11 +275,11 @@ def aggregate(
                     "z": row["Z"],
                     "index": 100.0 + 10.0 * (row["Z"] - m_r) / s_r,
                     "n_countries": row["n_countries"],
-                    "gdp_covered": row["gdp_covered"],
+                    "weight_covered": row["weight_covered"],
                 }
             )
 
     result = pd.DataFrame(
-        output_rows, columns=["group", "year_month", "z", "index", "n_countries", "gdp_covered"]
+        output_rows, columns=["group", "year_month", "z", "index", "n_countries", "weight_covered"]
     )
     return result.sort_values(["group", "year_month"]).reset_index(drop=True)
