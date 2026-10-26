@@ -1,15 +1,24 @@
-"""Read scraped article archives into a single table.
+"""Read scraped article archives into tables.
 
 Expects the on-disk layout produced by CAPE's scraper: ``<root>/<country>/
 <newspaper>/<year-month>/articles_<newspaper>_<year-month>.csv(.gz)``, each
 file holding the columns ``site``, ``date``, ``title``, ``url``, ``text``.
-This is the one function in the library that takes a path rather than a
+These are the only functions in the library that take a path rather than a
 table, matching the documented example usage.
+
+:func:`read_articles` materializes the whole requested scope as one table,
+which is simple but memory-heavy for a large archive (full article text for
+every country/newspaper/month at once). :func:`iter_country_month_batches`
+is the memory-safe alternative, yielding one small batch at a time; it's
+what :func:`newsindex.index.count_archive` (and therefore
+:func:`newsindex.run_index`/:func:`newsindex.run_index_with_baseline`) use
+for real production-scale runs.
 """
 
 from __future__ import annotations
 
 import html
+from collections.abc import Iterator
 from pathlib import Path
 
 import pandas as pd
@@ -21,6 +30,43 @@ def _unescape(value: object) -> object:
     if not isinstance(value, str):
         return value
     return html.unescape(value)
+
+
+def _resolve_countries(root: Path, countries: list[str] | str | None) -> list[str]:
+    available = sorted(p.name for p in root.iterdir() if p.is_dir())
+    if countries is None or countries == "all":
+        return available
+
+    by_lower = {name.lower(): name for name in available}
+    selected, missing = [], []
+    for name in countries:
+        match = by_lower.get(name.lower())
+        (selected if match else missing).append(match or name)
+    if missing:
+        raise ValueError(
+            f"country folder(s) not found under {root}: {missing}. Available: {available}"
+        )
+    return selected
+
+
+def _read_one(file: Path, country: str, encoding: str) -> pd.DataFrame:
+    frame = pd.read_csv(file, encoding=encoding, compression="infer")
+    missing = [col for col in _REQUIRED_COLUMNS if col not in frame.columns]
+    if missing:
+        raise ValueError(f"{file}: missing column(s) {missing}")
+    frame["country"] = country
+    return frame
+
+
+def _finalize(frame: pd.DataFrame) -> pd.DataFrame:
+    frame = frame.copy()
+    frame["title"] = frame["title"].map(_unescape)
+    frame["text"] = frame["text"].map(_unescape)
+    frame["year_month"] = frame["date"].astype(str).str.slice(0, 7)
+    frame = frame[["country", "site", "year_month", "date", "title", "url", "text"]]
+    for col in ("country", "site", "year_month"):
+        frame[col] = frame[col].astype("category")
+    return frame
 
 
 def read_articles(
@@ -40,23 +86,17 @@ def read_articles(
 
     Article titles and text are HTML-unescaped (the scraper stores raw HTML
     entities such as ``&#8217;``) before they reach :mod:`newsindex.match`.
+    ``country``/``site``/``year_month`` are returned as categorical columns
+    (each distinct value stored once, not once per row) to keep the
+    combined table's memory footprint down.
+
+    This reads the whole requested scope into memory at once. For a large
+    archive, prefer :func:`iter_country_month_batches` (or
+    :func:`newsindex.index.count_archive`, which uses it), which never
+    holds more than one country-month of articles at a time.
     """
     root = Path(root)
-    available = sorted(p.name for p in root.iterdir() if p.is_dir())
-
-    if countries is None or countries == "all":
-        selected = available
-    else:
-        by_lower = {name.lower(): name for name in available}
-        selected, missing = [], []
-        for name in countries:
-            match = by_lower.get(name.lower())
-            (selected if match else missing).append(match or name)
-        if missing:
-            raise ValueError(
-                f"country folder(s) not found under {root}: {missing}. "
-                f"Available: {available}"
-            )
+    selected = _resolve_countries(root, countries)
 
     files: list[Path] = []
     for country in selected:
@@ -67,18 +107,47 @@ def read_articles(
     if not files:
         raise FileNotFoundError(f"no article files found under {root}")
 
-    frames: list[pd.DataFrame] = []
-    for file in files:
-        country = file.relative_to(root).parts[0]
-        frame = pd.read_csv(file, encoding=encoding, compression="infer")
-        missing = [col for col in _REQUIRED_COLUMNS if col not in frame.columns]
-        if missing:
-            raise ValueError(f"{file}: missing column(s) {missing}")
-        frame["country"] = country
-        frames.append(frame)
+    frames = [_read_one(file, file.relative_to(root).parts[0], encoding) for file in files]
+    return _finalize(pd.concat(frames, ignore_index=True))
 
-    combined = pd.concat(frames, ignore_index=True)
-    combined["title"] = combined["title"].map(_unescape)
-    combined["text"] = combined["text"].map(_unescape)
-    combined["year_month"] = combined["date"].astype(str).str.slice(0, 7)
-    return combined[["country", "site", "year_month", "date", "title", "url", "text"]]
+
+def iter_country_month_batches(
+    root: str | Path, *, countries: list[str] | str | None = None, encoding: str = "utf-8"
+) -> Iterator[pd.DataFrame]:
+    """Yield one small table per (country, year-month folder) under ``root``,
+    instead of materializing the whole requested scope in memory at once.
+
+    Batching follows the archive's own layout: every newspaper's files
+    under one ``<country>/*/<year-month>/`` folder are read and yielded
+    together, then dropped before moving to the next (country, year-month)
+    pair -- so peak memory stays close to the size of one country-month's
+    articles, regardless of how many countries, newspapers, or years the
+    overall scope spans. Unlike :func:`read_articles`, this requires the
+    exact documented two-level ``<newspaper>/<year-month>/`` nesting under
+    each country folder, since the year-month *folder* name is what
+    batches are grouped by; each row's own ``year_month`` column is still
+    derived from its actual ``date`` value, exactly as in
+    :func:`read_articles` -- the folder name only decides batch boundaries.
+
+    ``countries`` is as in :func:`read_articles`. Raises
+    :class:`FileNotFoundError` if nothing is found under ``root`` -- on
+    first iteration, since this is a generator and nothing runs until then.
+    """
+    root = Path(root)
+    selected = _resolve_countries(root, countries)
+
+    found_any = False
+    for country in selected:
+        country_root = root / country
+        files_by_month: dict[str, list[Path]] = {}
+        for file in {*country_root.glob("*/*/*.csv.gz"), *country_root.glob("*/*/*.csv")}:
+            files_by_month.setdefault(file.parent.name, []).append(file)
+
+        for year_month in sorted(files_by_month):
+            files = sorted(files_by_month[year_month])
+            frames = [_read_one(file, country, encoding) for file in files]
+            found_any = True
+            yield _finalize(pd.concat(frames, ignore_index=True))
+
+    if not found_any:
+        raise FileNotFoundError(f"no article files found under {root}")

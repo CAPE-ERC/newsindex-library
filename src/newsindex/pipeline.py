@@ -1,12 +1,15 @@
 """One-call orchestration of the EPU pipeline for non-technical users.
 
 ``run_index`` and ``run_index_with_baseline`` wrap the building blocks in
-:mod:`newsindex.articles`, :mod:`newsindex.dictionary`, :mod:`newsindex.dedup`,
-and :mod:`newsindex.index` into a single call: load the dictionary, read the
-article archive, deduplicate, count, and compute the index. Anyone who needs
-one of those steps to behave differently should call the underlying
-functions directly instead -- these two exist only to remove the boilerplate
-around the common case.
+:mod:`newsindex.dictionary` and :mod:`newsindex.index` into a single call:
+load the dictionary, stream the article archive straight into EPU counts
+(country-month by country-month, via :func:`newsindex.index.count_archive`,
+never materializing the whole requested scope in memory at once), and
+compute the index. Anyone who needs read/dedupe/count as separate,
+in-memory steps should call :func:`newsindex.read_articles`,
+:func:`newsindex.dedup.dedupe`, and :func:`newsindex.index.count` directly
+instead -- these two exist only to remove the boilerplate around the
+common case.
 """
 
 from __future__ import annotations
@@ -16,10 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from . import dedup as _dedup
 from . import dictionary as _dictionary
 from . import index as _index
-from .articles import read_articles
 from .index import Baseline
 
 
@@ -45,19 +46,15 @@ def _read_and_count(
 ) -> pd.DataFrame:
     kw = _load_dictionary(dictionary_path, verbose=verbose)
 
-    _log(verbose, f"Reading articles from {root} ...")
-    articles = read_articles(root, countries=countries)
+    _log(verbose, f"Streaming articles from {root} (one country-month at a time) ...")
+    progress = (lambda message: _log(True, f"  {message}")) if verbose else None
+    counts = _index.count_archive(root, kw, countries=countries, progress=progress)
     _log(
         verbose,
-        f"Read {len(articles):,} articles across {articles['country'].nunique()} country folder(s).",
+        f"Counted {int(counts['all_articles'].sum()):,} articles "
+        f"({int(counts['epu_articles'].sum()):,} EPU) across {counts['country'].nunique()} countr(y/ies).",
     )
-
-    _log(verbose, "Deduplicating ...")
-    deduped = _dedup.dedupe(articles)
-    _log(verbose, f"{len(deduped):,} articles remain after deduplication.")
-
-    _log(verbose, "Counting EPU articles per newspaper-month ...")
-    return _index.count(deduped, kw)
+    return counts
 
 
 def run_index(
