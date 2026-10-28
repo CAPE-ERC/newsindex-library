@@ -11,7 +11,19 @@ from ._version import __version__
 from .aggregate import AFRICA_REGIONS
 from .articles import read_articles
 from .countries import countries
-from .pipeline import run_index, run_index_with_baseline
+from .pipeline import (
+    index_all,
+    index_countries,
+    index_region,
+    index_since,
+    quick_index,
+    rerun,
+    run_index,
+    run_index_with_baseline,
+)
+from .report import describe, print_period
+from .report import report as report
+from .report import summarize, top
 
 __all__ = [
     "__version__",
@@ -25,4 +37,15 @@ __all__ = [
     "AFRICA_REGIONS",
     "run_index",
     "run_index_with_baseline",
+    "quick_index",
+    "index_all",
+    "index_countries",
+    "index_region",
+    "index_since",
+    "rerun",
+    "summarize",
+    "print_period",
+    "describe",
+    "top",
+    "report",
 ]

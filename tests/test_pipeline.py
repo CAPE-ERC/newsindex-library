@@ -1,8 +1,10 @@
 """run_index / run_index_with_baseline: one-call orchestration."""
 
+import datetime
 import gzip
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 import newsindex as ni
@@ -135,3 +137,129 @@ def test_run_index_with_baseline_rejects_conflicting_baseline_arguments(tmp_path
             baseline_start="2020-01",
             verbose=False,
         )
+
+
+def test_quick_index_resolves_one_country_and_one_calendar_year(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    result = ni.quick_index(tmp_path / "archive", DATA_DICTIONARY, "Nigeria", 2020, verbose=False)
+
+    assert set(result["country"]) == {"Nigeria"}
+    assert set(result["year_month"]) <= {"2020-01", "2020-02", "2020-03"}
+
+
+def test_index_all_covers_every_country_folder(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    result = ni.index_all(tmp_path / "archive", DATA_DICTIONARY, "2020-01", "2020-03", verbose=False)
+
+    assert set(result["country"]) == {"Nigeria", "Kenya"}
+
+
+def test_index_countries_filters_to_the_given_list(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    result = ni.index_countries(
+        tmp_path / "archive", DATA_DICTIONARY, ["Kenya"], "2020-01", "2020-03", verbose=False
+    )
+
+    assert set(result["country"]) == {"Kenya"}
+
+
+def test_index_region_resolves_a_named_region_present_in_the_archive(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    result = ni.index_region(
+        tmp_path / "archive", DATA_DICTIONARY, "West", "2020-01", "2020-03", verbose=False
+    )
+
+    assert set(result["country"]) == {"Nigeria"}
+
+
+def test_index_region_accepts_an_explicit_country_list(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    result = ni.index_region(
+        tmp_path / "archive", DATA_DICTIONARY, ["Nigeria", "Kenya"], "2020-01", "2020-03", verbose=False
+    )
+
+    assert set(result["country"]) == {"Nigeria", "Kenya"}
+
+
+def test_index_region_raises_for_an_unknown_region_name(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    with pytest.raises(ValueError, match="unknown region"):
+        ni.index_region(
+            tmp_path / "archive", DATA_DICTIONARY, "NoSuchRegion", "2020-01", "2020-03", verbose=False
+        )
+
+
+def test_index_region_raises_when_no_member_folder_exists(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    with pytest.raises(ValueError, match="none of region"):
+        ni.index_region(tmp_path / "archive", DATA_DICTIONARY, "North", "2020-01", "2020-03", verbose=False)
+
+
+def test_index_since_covers_the_expected_relative_window(tmp_path, monkeypatch):
+    _build_archive(tmp_path / "archive")
+    real_date = datetime.date
+    fixed_date = type("FixedDate", (), {"today": staticmethod(lambda: real_date(2020, 3, 15))})
+    monkeypatch.setattr(ni.pipeline.datetime, "date", fixed_date)
+
+    result = ni.index_since(tmp_path / "archive", DATA_DICTIONARY, months_back=3, verbose=False)
+
+    assert set(result["year_month"]) <= {"2020-01", "2020-02", "2020-03"}
+
+
+def test_rerun_reproduces_a_run_index_result(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    first = ni.run_index(tmp_path / "archive", DATA_DICTIONARY, "2020-01", "2020-03", verbose=False)
+    again = ni.rerun(first)
+
+    pd.testing.assert_frame_equal(first, again)
+
+
+def test_rerun_reproduces_a_run_index_with_baseline_result_fit_fresh(tmp_path):
+    _build_archive(tmp_path / "archive")
+
+    first, _ = ni.run_index_with_baseline(
+        tmp_path / "archive",
+        DATA_DICTIONARY,
+        windows=[("2020-03", "2020-03")],
+        baseline_start="2020-01",
+        baseline_end="2020-02",
+        verbose=False,
+    )
+    again, _ = ni.rerun(first)
+
+    pd.testing.assert_frame_equal(first, again)
+
+
+def test_rerun_reproduces_a_run_index_with_baseline_result_reusing_a_baseline(tmp_path):
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+    kw = ni.dictionary.load(DATA_DICTIONARY)
+    counts = ni.index.count(ni.dedup.dedupe(ni.read_articles(archive)), kw)
+    fitted = ni.index.fit_baseline(counts, start="2020-01", end="2020-02")
+
+    first, _ = ni.run_index_with_baseline(
+        archive, DATA_DICTIONARY, windows=[("2020-03", "2020-03")], baseline=fitted, verbose=False
+    )
+    again, returned_baseline = ni.rerun(first)
+
+    assert returned_baseline is fitted
+    pd.testing.assert_frame_equal(first, again)
+
+
+def test_rerun_raises_a_clear_error_without_a_stored_config(tmp_path):
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+    kw = ni.dictionary.load(DATA_DICTIONARY)
+    counts = ni.index.count(ni.dedup.dedupe(ni.read_articles(archive)), kw)
+    plain_result = ni.index.compute_index(counts, "2020-01", "2020-03")
+
+    with pytest.raises(ValueError, match="rerun"):
+        ni.rerun(plain_result)

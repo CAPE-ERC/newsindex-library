@@ -189,7 +189,7 @@ def count_archive(
     return result.sort_values(["country", "site", "year_month"]).reset_index(drop=True)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class Baseline:
     """Frozen baseline scaling parameters for the country EPU index."""
 
@@ -202,6 +202,16 @@ class Baseline:
 
     def retained_sites(self, country: str) -> list[str]:
         return sorted(self.sigma.get(country, {}))
+
+    def __repr__(self) -> str:
+        countries = sorted(self.mu)
+        if not countries:
+            return f"Baseline({self.start}..{self.end}, 0 countries)"
+        shown = countries[:5]
+        details = ", ".join(f"{c} ({len(self.retained_sites(c))} sites)" for c in shown)
+        if len(countries) > len(shown):
+            details += f", ... +{len(countries) - len(shown)} more"
+        return f"Baseline({self.start}..{self.end}, {len(countries)} countries, e.g. {details})"
 
     def save(self, path: str | Path) -> None:
         payload = {
