@@ -128,6 +128,80 @@ def _markdown_table(table: pd.DataFrame) -> str:
     return "\n".join([header, separator, *rows])
 
 
+_RESAMPLE_FREQS = {"Q": "Q", "A": "Y", "Y": "Y"}
+
+
+def resample(result: pd.DataFrame, freq: str = "Q") -> pd.DataFrame:
+    """Reshape ``result`` from monthly to quarterly or annual averages.
+
+    ``freq`` is ``"Q"`` (quarterly) or ``"A"``/``"Y"`` (annual). Per
+    country, ``year_month`` ("YYYY-MM") is parsed to a monthly
+    :class:`pandas.Period`, converted to the target frequency, and ``EPU``
+    (plus ``M_t``/``n_sites`` where present) are averaged within each
+    resulting period. Output columns: ``country``, ``period`` (e.g.
+    ``"2024Q1"`` or ``"2024"``), and the averaged numeric columns.
+    """
+    target = _RESAMPLE_FREQS.get(freq.upper())
+    if target is None:
+        raise ValueError(f"unsupported freq {freq!r}; use 'Q', 'A', or 'Y'")
+
+    working = result.copy()
+    working["period"] = pd.PeriodIndex(working["year_month"], freq="M").asfreq(target).astype(str)
+
+    value_cols = [c for c in ("EPU", "M_t", "n_sites") if c in working.columns]
+    grouped = working.groupby(["country", "period"], as_index=False)[value_cols].mean()
+    return grouped.sort_values(["country", "period"]).reset_index(drop=True)
+
+
+def rebase(result: pd.DataFrame, new_baseline_period: tuple[str, str]) -> pd.DataFrame:
+    """Recompute the 100-mean rescaling of ``EPU`` against a different reference period.
+
+    Works directly off the already-scored ``EPU`` column -- no ``M_t``/
+    ``mu``/:class:`newsindex.index.Baseline` refit needed. Per country,
+    ``factor = 100 / mean(EPU in new_baseline_period)``, and every EPU
+    value for that country is multiplied by its own factor. Returns a copy
+    of ``result`` with ``EPU`` replaced; all other columns are unchanged.
+
+    Raises :class:`ValueError` (naming the country) if a country has no
+    rows in ``new_baseline_period``, or a zero mean there.
+    """
+    start, end = new_baseline_period
+    working = result.copy()
+    rebased = working["EPU"].astype(float).copy()
+
+    for country, rows in working.groupby("country"):
+        window = rows[(rows["year_month"] >= start) & (rows["year_month"] <= end)]
+        if window.empty:
+            raise ValueError(f"{country!r} has no rows in new_baseline_period [{start}, {end}]")
+        baseline_mean = float(window["EPU"].mean())
+        if baseline_mean == 0:
+            raise ValueError(f"{country!r} has a zero mean EPU in new_baseline_period [{start}, {end}] -- cannot rebase")
+        factor = 100.0 / baseline_mean
+        rebased.loc[rows.index] = rows["EPU"].astype(float) * factor
+
+    working["EPU"] = rebased
+    return working
+
+
+def smooth(result: pd.DataFrame, window: int = 3) -> pd.DataFrame:
+    """Add an ``EPU_smoothed`` rolling-average column, per country.
+
+    Returns a copy of ``result`` with the raw ``EPU`` column unchanged and
+    a new ``EPU_smoothed`` column: the trailing ``window``-month average,
+    sorted by ``year_month`` within each country. ``min_periods=1`` means
+    the first ``window - 1`` months of each country are averaged over
+    however many months are available so far, rather than dropped.
+    """
+    if window < 1:
+        raise ValueError(f"window must be >= 1, got {window}")
+
+    working = result.sort_values(["country", "year_month"]).copy()
+    working["EPU_smoothed"] = working.groupby("country")["EPU"].transform(
+        lambda s: s.rolling(window=window, min_periods=1).mean()
+    )
+    return working.sort_index()
+
+
 def report(result: pd.DataFrame, path: str | Path) -> None:
     """Render a minimal one-page report to ``path``.
 
