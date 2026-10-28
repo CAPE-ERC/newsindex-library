@@ -26,6 +26,11 @@ test = ["pytest>=7"]
 plot = ["matplotlib>=3.7"]
 plotly = ["plotly>=5"]
 seaborn = ["seaborn>=0.13"]
+excel = ["openpyxl>=3.1"]
+parquet = ["pyarrow>=14"]
+gsheet = ["gspread>=6"]
+docx = ["python-docx>=1.1"]
+pdf = ["fpdf2>=2.7"]
 
 [project.urls]
 Homepage = "https://github.com/CAPE-ERC/newsindex-library"

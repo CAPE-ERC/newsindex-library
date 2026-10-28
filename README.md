@@ -73,6 +73,24 @@ ni.top(country, n=5, by="EPU")     # top-5 country-months
 ni.report(country, "report.html")  # one-page HTML or Markdown report
 ```
 
+### Saving, loading, and exporting
+
+```python
+ni.save(country, "country_index.csv")      # format auto-detected from the extension
+ni.save(country, "country_index.xlsx")     # needs: pip install newsindex[excel]
+ni.save(country, "country_index.parquet")  # needs: pip install newsindex[parquet]
+ni.save_excel(country, "by_country.xlsx", sheet_by="country")  # one sheet per country
+
+country_back = ni.load("country_index.csv")  # read-back counterpart, same auto-detection
+
+ni.save_all({"country": country, "regions": regions}, "out/", formats=["csv", "xlsx"])
+ni.save_versioned(country, "out/")        # out/result_20260101T120000.csv, never overwrites
+ni.save_sql(country, sqlalchemy_engine, "country_index")  # caller supplies the connection
+
+ni.save_report(country, "report.docx")    # needs: pip install newsindex[docx]
+ni.save_report(country, "report.pdf")     # needs: pip install newsindex[pdf]
+```
+
 ## Usage
 
 ```python
