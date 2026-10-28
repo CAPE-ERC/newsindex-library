@@ -71,6 +71,34 @@ ni.print_period(country, "2020-01", "2020-06")  # pretty-print a slice
 ni.describe(country)               # per-country min/max/mean/std + biggest move
 ni.top(country, n=5, by="EPU")     # top-5 country-months
 ni.report(country, "report.html")  # one-page HTML or Markdown report
+
+ni.resample(country, freq="Q")               # monthly -> quarterly/annual averages
+ni.rebase(country, ("2022-01", "2022-12"))   # recompute the 100-mean rescaling against a different period
+ni.smooth(country, window=3)                 # adds an EPU_smoothed rolling-average column
+```
+
+### Diagnostics
+
+Catch problems in an archive or dictionary before spending a long run on bad input:
+
+```python
+ni.coverage(root)                      # which (country, year-month) pairs have files, and how many
+ni.validate_archive(root)              # missing columns / empty files / date-vs-folder mismatches
+ni.dictionary_coverage(kw, root)       # countries in the archive with no dictionary entry, and vice versa
+ni.health_check(root, dict_path)       # one-call "is everything wired up correctly" smoke test
+```
+
+### Weighting presets
+
+Ready-made weight sources for `aggregate()`'s `weights` argument, for cases that would otherwise mean writing the same table or lambda by hand:
+
+```python
+ni.weights.equal                               # equal weighting -- pass directly, no call
+ni.weights.gdp("gdp.csv")                      # same as aggregate.monthly_gdp()
+ni.weights.population("population.csv")        # same interpolation, a population column instead
+ni.weights.custom("share")                     # weight by an existing column of country_index
+ni.weights.pca(indicators_table)                # composite weight from the first principal component
+                                                 # across several indicator columns (e.g. gdp + population)
 ```
 
 ### Saving, loading, and exporting
@@ -143,8 +171,10 @@ Every function returns the backend's native figure object (`matplotlib.figure.Fi
 | `dedup` | Remove duplicate articles within a country-month by canonical URL, or by title/text when the URL is missing | `canonical_url()`, `dedupe()` |
 | `index` | Count EPU articles per newspaper-month (from a table, or streamed straight from an archive); compute a single-window index, or fit a frozen baseline and score later windows against it | `count()`, `count_archive()`, `compute_index()`, `fit_baseline()`, `score()`, `score_windows()` |
 | `aggregate` | Country z-scores, weighting (GDP-PPP by default, or your own table/function), regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
+| `weights` | Ready-made weight sources for `aggregate()` | `equal`, `gdp()`, `population()`, `custom()`, `pca()` |
+| `diagnostics` | Catch archive/dictionary problems before a long run | `coverage()`, `validate_archive()`, `dictionary_coverage()`, `health_check()` |
 
-`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call, with named shortcuts (`quick_index`, `index_all`, `index_countries`, `index_region`, `index_since`, `rerun`) for common request shapes. `newsindex.summarize()`/`print_period()`/`describe()`/`top()`/`report()` (from the `report` module, re-exported at the package root) turn a result table into something readable without opening pandas. `newsindex.plot()` and friends (see Plotting above) turn one into a chart. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
+`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call, with named shortcuts (`quick_index`, `index_all`, `index_countries`, `index_region`, `index_since`, `rerun`) for common request shapes. `newsindex.summarize()`/`print_period()`/`describe()`/`top()`/`report()`/`resample()`/`rebase()`/`smooth()` (from the `report` module, re-exported at the package root) turn a result table into something readable without opening pandas. `newsindex.plot()` and friends (see Plotting above) turn one into a chart. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
 
 ## Countries
 
