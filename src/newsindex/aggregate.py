@@ -97,6 +97,72 @@ DEFAULT_COUNTRY_ALIASES: dict[str, str] = {
 }
 
 
+def _interpolate_annual_to_monthly(
+    raw: pd.DataFrame,
+    *,
+    country_col: str,
+    year_col: str,
+    value_col: str,
+    scale: float,
+    end: str | None,
+    aliases: dict[str, str] | None,
+    output_col: str,
+) -> pd.DataFrame:
+    """Shared body of :func:`monthly_gdp`/:func:`newsindex.weights.population`.
+
+    Each annual value is placed at 1 January of its year and interpolated
+    linearly in logarithms through the next year's figure. After a
+    country's last annual figure, the value is held flat (carried forward),
+    optionally through ``end`` (a ``"YYYY-MM"`` string). ``scale``
+    multiplies every value after it is read. Output column is named
+    ``output_col`` rather than a fixed ``"gdp"``, so the same logic serves
+    any annual-by-country metric.
+    """
+    aliases = DEFAULT_COUNTRY_ALIASES if aliases is None else aliases
+    raw = raw.copy() if isinstance(raw, pd.DataFrame) else pd.read_csv(raw)
+    raw[country_col] = raw[country_col].map(lambda c: aliases.get(c, c))
+
+    rows: list[dict] = []
+    for country, group in raw.groupby(country_col):
+        pairs = sorted(
+            (int(year), float(value) * scale)
+            for year, value in zip(group[year_col], group[value_col])
+        )
+        for i, (year, value) in enumerate(pairs):
+            if i + 1 < len(pairs):
+                next_year, next_value = pairs[i + 1]
+                if next_year == year:
+                    continue
+                for m in range(12):
+                    frac = m / 12.0
+                    if value > 0 and next_value > 0:
+                        interpolated = float(
+                            np.exp(np.log(value) + frac * (np.log(next_value) - np.log(value)))
+                        )
+                    else:
+                        interpolated = value
+                    rows.append(
+                        {"country": country, "year_month": f"{year}-{m + 1:02d}", output_col: interpolated}
+                    )
+            else:
+                for m in range(12):
+                    rows.append(
+                        {"country": country, "year_month": f"{year}-{m + 1:02d}", output_col: value}
+                    )
+                if end is not None:
+                    carry_year = year + 1
+                    while f"{carry_year}-01" <= end:
+                        for m in range(12):
+                            year_month = f"{carry_year}-{m + 1:02d}"
+                            if year_month > end:
+                                break
+                            rows.append({"country": country, "year_month": year_month, output_col: value})
+                        carry_year += 1
+
+    result = pd.DataFrame(rows, columns=["country", "year_month", output_col])
+    return result.sort_values(["country", "year_month"]).reset_index(drop=True)
+
+
 def monthly_gdp(
     source: str | Path | pd.DataFrame,
     *,
@@ -122,49 +188,16 @@ def monthly_gdp(
     ``scale`` multiplies every value after it is read, e.g. ``scale=1000``
     to convert a billions-denominated source file to millions.
     """
-    aliases = DEFAULT_COUNTRY_ALIASES if aliases is None else aliases
-    raw = source.copy() if isinstance(source, pd.DataFrame) else pd.read_csv(source)
-    raw[country_col] = raw[country_col].map(lambda c: aliases.get(c, c))
-
-    rows: list[dict] = []
-    for country, group in raw.groupby(country_col):
-        pairs = sorted(
-            (int(year), float(value) * scale)
-            for year, value in zip(group[year_col], group[value_col])
-        )
-        for i, (year, value) in enumerate(pairs):
-            if i + 1 < len(pairs):
-                next_year, next_value = pairs[i + 1]
-                if next_year == year:
-                    continue
-                for m in range(12):
-                    frac = m / 12.0
-                    if value > 0 and next_value > 0:
-                        interpolated = float(
-                            np.exp(np.log(value) + frac * (np.log(next_value) - np.log(value)))
-                        )
-                    else:
-                        interpolated = value
-                    rows.append(
-                        {"country": country, "year_month": f"{year}-{m + 1:02d}", "gdp": interpolated}
-                    )
-            else:
-                for m in range(12):
-                    rows.append(
-                        {"country": country, "year_month": f"{year}-{m + 1:02d}", "gdp": value}
-                    )
-                if end is not None:
-                    carry_year = year + 1
-                    while f"{carry_year}-01" <= end:
-                        for m in range(12):
-                            year_month = f"{carry_year}-{m + 1:02d}"
-                            if year_month > end:
-                                break
-                            rows.append({"country": country, "year_month": year_month, "gdp": value})
-                        carry_year += 1
-
-    result = pd.DataFrame(rows, columns=["country", "year_month", "gdp"])
-    return result.sort_values(["country", "year_month"]).reset_index(drop=True)
+    return _interpolate_annual_to_monthly(
+        source,
+        country_col=country_col,
+        year_col=year_col,
+        value_col=value_col,
+        scale=scale,
+        end=end,
+        aliases=aliases,
+        output_col="gdp",
+    )
 
 
 def _population_stats(series: pd.Series) -> tuple[float, float]:

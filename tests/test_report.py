@@ -151,3 +151,81 @@ def test_baseline_repr_truncates_past_five_countries():
     baseline = ni.index.Baseline(start="2015-01", end="2024-12", mu=mu, sigma=sigma)
 
     assert "+3 more" in repr(baseline)
+
+
+def test_resample_quarterly_averages_within_each_quarter(result):
+    quarterly = ni.resample(result, freq="Q")
+
+    assert set(quarterly["period"]) == {"2020Q1"}
+    assert set(quarterly["country"]) == {"Nigeria", "Kenya"}
+
+
+def test_resample_annual_accepts_a_and_y():
+    monthly = pd.DataFrame(
+        {"country": ["Nigeria"] * 3, "year_month": ["2020-01", "2020-02", "2020-03"], "EPU": [90.0, 100.0, 110.0]}
+    )
+
+    annual_a = ni.resample(monthly, freq="A")
+    annual_y = ni.resample(monthly, freq="Y")
+
+    assert list(annual_a["period"]) == ["2020"]
+    assert annual_a["EPU"].iloc[0] == pytest.approx(100.0)
+    pd.testing.assert_frame_equal(annual_a, annual_y)
+
+
+def test_resample_raises_on_an_unsupported_freq(result):
+    with pytest.raises(ValueError, match="unsupported freq"):
+        ni.resample(result, freq="W")
+
+
+def test_rebase_rescales_each_country_to_a_new_reference_period():
+    series = pd.DataFrame(
+        {
+            "country": ["Nigeria"] * 2,
+            "year_month": ["2020-01", "2020-02"],
+            "EPU": [50.0, 100.0],
+        }
+    )
+
+    rebased = ni.rebase(series, ("2020-01", "2020-01"))
+
+    assert rebased.loc[rebased["year_month"] == "2020-01", "EPU"].iloc[0] == pytest.approx(100.0)
+    assert rebased.loc[rebased["year_month"] == "2020-02", "EPU"].iloc[0] == pytest.approx(200.0)
+
+
+def test_rebase_raises_naming_a_country_with_no_rows_in_the_new_period():
+    series = pd.DataFrame({"country": ["Nigeria"], "year_month": ["2020-01"], "EPU": [50.0]})
+
+    with pytest.raises(ValueError, match="Nigeria"):
+        ni.rebase(series, ("2099-01", "2099-12"))
+
+
+def test_rebase_raises_on_a_zero_mean_baseline_period():
+    series = pd.DataFrame({"country": ["Nigeria"], "year_month": ["2020-01"], "EPU": [0.0]})
+
+    with pytest.raises(ValueError, match="zero mean"):
+        ni.rebase(series, ("2020-01", "2020-01"))
+
+
+def test_smooth_adds_a_rolling_column_without_touching_raw_epu():
+    series = pd.DataFrame(
+        {
+            "country": ["Nigeria"] * 4,
+            "year_month": ["2020-01", "2020-02", "2020-03", "2020-04"],
+            "EPU": [10.0, 20.0, 30.0, 40.0],
+        }
+    )
+
+    smoothed = ni.smooth(series, window=2)
+
+    assert list(smoothed["EPU"]) == [10.0, 20.0, 30.0, 40.0]
+    assert smoothed["EPU_smoothed"].iloc[0] == pytest.approx(10.0)
+    assert smoothed["EPU_smoothed"].iloc[1] == pytest.approx(15.0)
+    assert smoothed["EPU_smoothed"].iloc[3] == pytest.approx(35.0)
+
+
+def test_smooth_raises_on_a_non_positive_window():
+    series = pd.DataFrame({"country": ["Nigeria"], "year_month": ["2020-01"], "EPU": [10.0]})
+
+    with pytest.raises(ValueError, match="window"):
+        ni.smooth(series, window=0)
