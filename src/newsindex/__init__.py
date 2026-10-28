@@ -21,6 +21,21 @@ from .pipeline import (
     run_index,
     run_index_with_baseline,
 )
+from .plot import (
+    plot,
+    plot_baseline,
+    plot_compare,
+    plot_components,
+    plot_correlation,
+    plot_dashboard,
+    plot_distribution,
+    plot_heatmap,
+    plot_rank,
+    plot_regions,
+    plot_rolling,
+    save_plot,
+    theme,
+)
 from .report import describe, print_period
 from .report import report as report
 from .report import summarize, top
@@ -48,4 +63,17 @@ __all__ = [
     "describe",
     "top",
     "report",
+    "plot",
+    "plot_compare",
+    "plot_regions",
+    "plot_heatmap",
+    "plot_rank",
+    "plot_rolling",
+    "plot_distribution",
+    "plot_components",
+    "plot_baseline",
+    "plot_correlation",
+    "plot_dashboard",
+    "theme",
+    "save_plot",
 ]

@@ -23,6 +23,9 @@ dependencies = ["pandas>=1.5", "numpy>=1.23"]
 
 [project.optional-dependencies]
 test = ["pytest>=7"]
+plot = ["matplotlib>=3.7"]
+plotly = ["plotly>=5"]
+seaborn = ["seaborn>=0.13"]
 
 [project.urls]
 Homepage = "https://github.com/CAPE-ERC/newsindex-library"
