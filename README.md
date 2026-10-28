@@ -49,6 +49,30 @@ Both print progress to stderr by default, one line per country-month as it's pro
 
 Both stream the archive internally via `index.count_archive()` -- see [Performance](#performance) -- rather than reading the whole requested scope into memory at once, so they're the memory-safe choice for a large archive. They compose `index.count_archive()` with `index.compute_index()`/`index.fit_baseline()`+`index.score_windows()`; reach for the lower-level functions directly (see Usage below) for anything a single call can't express, e.g. inspecting the deduplicated article table or reusing one count table across several baseline windows.
 
+### Quick-call shortcuts
+
+For the shapes of request that come up most often, a few named shortcuts sit on top of `run_index` -- same memory-safe streaming underneath, just naming the intent instead of assembling the arguments:
+
+```python
+ni.quick_index(root, dict_path, "Nigeria", 2020)                # one country, one calendar year
+ni.index_all(root, dict_path, "2020-01", "2020-12")              # every country folder, explicitly
+ni.index_countries(root, dict_path, ["Nigeria", "Kenya"], "2020-01", "2020-12")
+ni.index_region(root, dict_path, "West", "2020-01", "2020-12")   # a whole AFRICA_REGIONS group
+ni.index_since(root, dict_path, months_back=12)                  # relative window ending this month
+```
+
+Every result from `run_index`/`run_index_with_baseline` (and these shortcuts) carries its own config in `result.attrs["newsindex_config"]`, so `ni.rerun(result)` re-runs the exact same call -- handy for a monthly refresh script that just does `result = ni.rerun(last_result)`.
+
+### Reading a result table
+
+```python
+print(ni.summarize(country))       # plain-English per-country summary
+ni.print_period(country, "2020-01", "2020-06")  # pretty-print a slice
+ni.describe(country)               # per-country min/max/mean/std + biggest move
+ni.top(country, n=5, by="EPU")     # top-5 country-months
+ni.report(country, "report.html")  # one-page HTML or Markdown report
+```
+
 ## Usage
 
 ```python
@@ -89,7 +113,7 @@ None of this changes any function's output -- `count_archive()` produces the sam
 | `index` | Count EPU articles per newspaper-month (from a table, or streamed straight from an archive); compute a single-window index, or fit a frozen baseline and score later windows against it | `count()`, `count_archive()`, `compute_index()`, `fit_baseline()`, `score()`, `score_windows()` |
 | `aggregate` | Country z-scores, weighting (GDP-PPP by default, or your own table/function), regional and Africa series; annual-to-monthly GDP | `monthly_gdp()`, `aggregate()` |
 
-`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
+`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call, with named shortcuts (`quick_index`, `index_all`, `index_countries`, `index_region`, `index_since`, `rerun`) for common request shapes. `newsindex.summarize()`/`print_period()`/`describe()`/`top()`/`report()` (from the `report` module, re-exported at the package root) turn a result table into something readable without opening pandas. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
 
 ## Countries
 
