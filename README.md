@@ -149,6 +149,19 @@ A large archive (many countries, many newspapers, several years) can be too much
 
 None of this changes any function's output -- `count_archive()` produces the same counts as `count(dedupe(read_articles(...)), dictionary)` (see its docstring for the one documented edge case around articles whose actual date disagrees with their month folder).
 
+## Plotting
+
+`newsindex.plot(result)` and friends (`plot_compare`, `plot_regions`, `plot_heatmap`, `plot_rank`, `plot_rolling`, `plot_distribution`, `plot_components`, `plot_baseline`, `plot_correlation`, `plot_dashboard`) turn a result table straight into a chart, without hand-writing matplotlib/plotly code. They need `pip install newsindex[plot]` (matplotlib); `backend="plotly"`/`backend="seaborn"` need `newsindex[plotly]`/`newsindex[seaborn]` on top of that.
+
+```python
+fig = ni.plot(country_index)                       # one line per country, matplotlib
+fig = ni.plot(country_index, kind="bar", backend="plotly")
+ni.theme()                                          # a consistent default style for the rest of the script
+ni.save_plot(fig, "epu_trend.png")
+```
+
+Every function returns the backend's native figure object (`matplotlib.figure.Figure`, or a `plotly.graph_objects.Figure` for `backend="plotly"`) so it can be customized further before saving; `save_plot(fig, path)` dispatches to the right save call for you.
+
 ## Modules
 
 | Module | Responsibility | Main functions |
@@ -161,7 +174,7 @@ None of this changes any function's output -- `count_archive()` produces the sam
 | `weights` | Ready-made weight sources for `aggregate()` | `equal`, `gdp()`, `population()`, `custom()`, `pca()` |
 | `diagnostics` | Catch archive/dictionary problems before a long run | `coverage()`, `validate_archive()`, `dictionary_coverage()`, `health_check()` |
 
-`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call, with named shortcuts (`quick_index`, `index_all`, `index_countries`, `index_region`, `index_since`, `rerun`) for common request shapes. `newsindex.summarize()`/`print_period()`/`describe()`/`top()`/`report()`/`resample()`/`rebase()`/`smooth()` (from the `report` module, re-exported at the package root) turn a result table into something readable without opening pandas. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
+`newsindex.read_articles(root)` reads the one input these functions don't take as a table: a directory of scraped article archives. `newsindex.run_index()`/`run_index_with_baseline()` (see Quick start above) compose the whole pipeline in one call, with named shortcuts (`quick_index`, `index_all`, `index_countries`, `index_region`, `index_since`, `rerun`) for common request shapes. `newsindex.summarize()`/`print_period()`/`describe()`/`top()`/`report()`/`resample()`/`rebase()`/`smooth()` (from the `report` module, re-exported at the package root) turn a result table into something readable without opening pandas. `newsindex.plot()` and friends (see Plotting above) turn one into a chart. `newsindex.countries()` is a standalone reference table (see below), not part of the EPU pipeline itself.
 
 ## Countries
 
