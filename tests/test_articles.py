@@ -148,3 +148,23 @@ def test_iter_country_month_batches_countries_filters(tmp_path):
 def test_iter_country_month_batches_raises_when_nothing_found(tmp_path):
     with pytest.raises(FileNotFoundError):
         list(iter_country_month_batches(tmp_path))
+
+
+def test_iter_country_month_batches_start_end_skips_months_outside_the_window(tmp_path):
+    _build_multi_month_archive(tmp_path)
+
+    batches = list(iter_country_month_batches(tmp_path, start="2026-02", end="2026-02"))
+
+    assert len(batches) == 1
+    assert set(batches[0]["year_month"]) == {"2026-02"}
+
+
+def test_iter_country_month_batches_start_end_defaults_to_everything(tmp_path):
+    _build_multi_month_archive(tmp_path)
+
+    unfiltered = list(iter_country_month_batches(tmp_path))
+    explicit_full_range = list(
+        iter_country_month_batches(tmp_path, start="2026-01", end="2026-02")
+    )
+
+    assert len(unfiltered) == len(explicit_full_range) == 3

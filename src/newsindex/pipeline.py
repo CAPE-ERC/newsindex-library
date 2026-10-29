@@ -45,12 +45,16 @@ def _read_and_count(
     countries: list[str] | str | None,
     *,
     verbose: bool,
+    start: str | None = None,
+    end: str | None = None,
 ) -> pd.DataFrame:
     kw = _load_dictionary(dictionary_path, verbose=verbose)
 
     _log(verbose, f"Streaming articles from {root} (one country-month at a time) ...")
     progress = (lambda message: _log(True, f"  {message}")) if verbose else None
-    counts = _index.count_archive(root, kw, countries=countries, progress=progress)
+    counts = _index.count_archive(
+        root, kw, countries=countries, progress=progress, start=start, end=end
+    )
     _log(
         verbose,
         f"Counted {int(counts['all_articles'].sum()):,} articles "
@@ -74,14 +78,16 @@ def run_index(
     ``dictionary_path`` the EPTU-schema keyword dictionary to classify against.
     ``start``/``end`` are the inclusive ``"YYYY-MM"`` window: ``sigma``/``mu``
     are fit from it and used to score that same window -- this is the
-    no-baseline variant (see :func:`newsindex.index.compute_index`).
+    no-baseline variant (see :func:`newsindex.index.compute_index`). Only
+    this window's month folders are ever read -- no earlier archive
+    history is streamed, scanned, or shown in progress output.
 
     ``countries`` restricts which country folders under ``root`` are read
     (a list, or ``"all"``/omitted for every folder -- see
     :func:`newsindex.read_articles`). Progress is printed to stderr unless
     ``verbose=False``.
     """
-    counts = _read_and_count(root, dictionary_path, countries, verbose=verbose)
+    counts = _read_and_count(root, dictionary_path, countries, verbose=verbose, start=start, end=end)
     _log(verbose, f"Computing index for {start}..{end} ...")
     result = _index.compute_index(counts, start, end)
     _log(verbose, f"Done: {len(result):,} country-month rows.")

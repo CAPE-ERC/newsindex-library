@@ -126,6 +126,8 @@ def count_archive(
     title_col: str = "title",
     text_col: str = "text",
     progress: Callable[[str], None] | None = None,
+    start: str | None = None,
+    end: str | None = None,
 ) -> pd.DataFrame:
     """Count EPU and total articles per country-site-month directly from an
     article archive, without ever materializing the whole requested scope
@@ -152,9 +154,17 @@ def count_archive(
     ``progress``, if given, is called with one short status line after each
     batch (e.g. to print it) -- useful for a long run against a large
     archive, so it's visible as working rather than looking stalled.
+
+    ``start``/``end``, if given, restrict which year-month folders are read
+    at all (see :func:`newsindex.articles.iter_country_month_batches`) --
+    pass the window you actually need (e.g. the same ``start``/``end`` as
+    :func:`newsindex.run_index`) so progress and the resulting counts never
+    cover months outside it.
     """
     parts: list[pd.DataFrame] = []
-    for batch in iter_country_month_batches(root, countries=countries, encoding=encoding):
+    for batch in iter_country_month_batches(
+        root, countries=countries, encoding=encoding, start=start, end=end
+    ):
         country = str(batch[country_col].iloc[0]) if len(batch) else "?"
         months = sorted(str(m) for m in batch[month_col].unique()) if len(batch) else []
         n_read = len(batch)
