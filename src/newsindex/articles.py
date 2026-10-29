@@ -112,7 +112,12 @@ def read_articles(
 
 
 def iter_country_month_batches(
-    root: str | Path, *, countries: list[str] | str | None = None, encoding: str = "utf-8"
+    root: str | Path,
+    *,
+    countries: list[str] | str | None = None,
+    encoding: str = "utf-8",
+    start: str | None = None,
+    end: str | None = None,
 ) -> Iterator[pd.DataFrame]:
     """Yield one small table per (country, year-month folder) under ``root``,
     instead of materializing the whole requested scope in memory at once.
@@ -129,7 +134,11 @@ def iter_country_month_batches(
     derived from its actual ``date`` value, exactly as in
     :func:`read_articles` -- the folder name only decides batch boundaries.
 
-    ``countries`` is as in :func:`read_articles`. Raises
+    ``countries`` is as in :func:`read_articles`. ``start``/``end``, if
+    given, restrict which year-month *folders* are read at all (inclusive
+    ``"YYYY-MM"`` strings, compared lexicographically against the folder
+    name) -- a month folder outside that range is skipped before any file
+    in it is opened, instead of being read and discarded later. Raises
     :class:`FileNotFoundError` if nothing is found under ``root`` -- on
     first iteration, since this is a generator and nothing runs until then.
     """
@@ -141,7 +150,12 @@ def iter_country_month_batches(
         country_root = root / country
         files_by_month: dict[str, list[Path]] = {}
         for file in {*country_root.glob("*/*/*.csv.gz"), *country_root.glob("*/*/*.csv")}:
-            files_by_month.setdefault(file.parent.name, []).append(file)
+            year_month = file.parent.name
+            if start is not None and year_month < start:
+                continue
+            if end is not None and year_month > end:
+                continue
+            files_by_month.setdefault(year_month, []).append(file)
 
         for year_month in sorted(files_by_month):
             files = sorted(files_by_month[year_month])

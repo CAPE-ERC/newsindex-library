@@ -61,6 +61,22 @@ def test_run_index_verbose_false_is_silent(tmp_path, capsys):
     assert capsys.readouterr().err == ""
 
 
+def test_run_index_only_streams_the_requested_window_not_earlier_archive_history(tmp_path, capsys):
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+    # A month well outside the requested 2020-01..2020-03 window -- run_index
+    # must never read it, or mention it in progress output.
+    _write(
+        archive / "Nigeria" / "The Punch" / "2015-06" / "articles_The Punch_2015-06.csv.gz",
+        ['The Punch,2015-06-01,"Old fiscal policy uncertainty story",https://example.com/old,body'],
+    )
+
+    ni.run_index(archive, DATA_DICTIONARY, "2020-01", "2020-03")
+
+    progress_output = capsys.readouterr().err
+    assert "2015-06" not in progress_output
+
+
 def test_run_index_countries_filters_the_archive(tmp_path):
     _build_archive(tmp_path / "archive")
 
