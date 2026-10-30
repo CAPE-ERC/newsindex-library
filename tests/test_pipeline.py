@@ -153,7 +153,73 @@ def test_run_index_with_baseline_rejects_conflicting_baseline_arguments(tmp_path
             baseline_start="2020-01",
             verbose=False,
         )
+@pytest.mark.parametrize("reuse_baseline", [False, True], ids=["fresh", "reused"])
+def test_run_index_with_baseline_reads_only_required_months(
+    tmp_path, monkeypatch, reuse_baseline
+):
+    """Check that baseline scoring skips irrelevant archive months."""
+    archive = tmp_path / "archive"
+    _build_archive(archive)
 
+    # Add two months outside the baseline and scoring windows.
+    for month in ("2015-06", "2024-06"):
+        _write(
+            archive / "Nigeria" / "The Punch" / month
+            / f"articles_The Punch_{month}.csv.gz",
+            [
+                f'The Punch,{month}-01,"Old fiscal policy uncertainty story",'
+                f'https://example.com/nigeria/{month}/old,body'
+            ],
+        )
+
+    baseline = None
+    if reuse_baseline:
+        keywords = ni.dictionary.load(DATA_DICTIONARY)
+        articles = ni.read_articles(archive)
+        counts = ni.index.count(ni.dedup.dedupe(articles), keywords)
+        baseline = ni.index.fit_baseline(
+            counts, start="2020-01", end="2020-02"
+        )
+
+    # Record every monthly article file opened.
+    import newsindex.articles as article_module
+
+    opened_months = []
+    original_read_one = article_module._read_one
+
+    def recording_read_one(file, country, encoding):
+        opened_months.append(file.parent.name)
+        return original_read_one(file, country, encoding)
+
+    monkeypatch.setattr(article_module, "_read_one", recording_read_one)
+
+    kwargs = (
+        {"baseline": baseline}
+        if reuse_baseline
+        else {"baseline_start": "2020-01", "baseline_end": "2020-02"}
+    )
+
+    result, _ = ni.run_index_with_baseline(
+        archive,
+        DATA_DICTIONARY,
+        windows=[("2020-03", "2020-03")],
+        countries=["Nigeria"],
+        verbose=False,
+        **kwargs,
+    )
+
+    assert set(result["window"]) == {"2020-03:2020-03"}
+
+    expected = (
+        {"2020-03"}
+        if reuse_baseline
+        else {"2020-01", "2020-02", "2020-03"}
+    )
+
+    assert set(opened_months) == expected, (
+        f"Opened {sorted(set(opened_months))}; "
+        f"expected only {sorted(expected)}"
+    )
 
 def test_quick_index_resolves_one_country_and_one_calendar_year(tmp_path):
     _build_archive(tmp_path / "archive")
