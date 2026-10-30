@@ -118,6 +118,7 @@ def iter_country_month_batches(
     encoding: str = "utf-8",
     start: str | None = None,
     end: str | None = None,
+    windows: list[tuple[str, str]] | None = None,
 ) -> Iterator[pd.DataFrame]:
     """Yield one small table per (country, year-month folder) under ``root``,
     instead of materializing the whole requested scope in memory at once.
@@ -154,6 +155,11 @@ def iter_country_month_batches(
             if start is not None and year_month < start:
                 continue
             if end is not None and year_month > end:
+                continue
+            if windows is not None and not any(
+                window_start <= year_month <= window_end
+                for window_start, window_end in windows
+            ):
                 continue
             files_by_month.setdefault(year_month, []).append(file)
 
