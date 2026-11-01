@@ -128,6 +128,7 @@ def count_archive(
     progress: Callable[[str], None] | None = None,
     start: str | None = None,
     end: str | None = None,
+    windows: list[tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     """Count EPU and total articles per country-site-month directly from an
     article archive, without ever materializing the whole requested scope
@@ -163,7 +164,7 @@ def count_archive(
     """
     parts: list[pd.DataFrame] = []
     for batch in iter_country_month_batches(
-        root, countries=countries, encoding=encoding, start=start, end=end
+        root, countries=countries, encoding=encoding, start=start, end=end, windows=windows
     ):
         country = str(batch[country_col].iloc[0]) if len(batch) else "?"
         months = sorted(str(m) for m in batch[month_col].unique()) if len(batch) else []

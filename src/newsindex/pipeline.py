@@ -47,13 +47,14 @@ def _read_and_count(
     verbose: bool,
     start: str | None = None,
     end: str | None = None,
+    windows: list[tuple[str, str]] | None = None,
 ) -> pd.DataFrame:
     kw = _load_dictionary(dictionary_path, verbose=verbose)
 
     _log(verbose, f"Streaming articles from {root} (one country-month at a time) ...")
     progress = (lambda message: _log(True, f"  {message}")) if verbose else None
     counts = _index.count_archive(
-        root, kw, countries=countries, progress=progress, start=start, end=end
+        root, kw, countries=countries, progress=progress, start=start, end=end, windows=windows
     )
     _log(
         verbose,
@@ -136,7 +137,17 @@ def run_index_with_baseline(
     if baseline is not None and (baseline_start is not None or baseline_end is not None):
         raise ValueError("pass baseline on its own, not alongside baseline_start/baseline_end")
 
-    counts = _read_and_count(root, dictionary_path, countries, verbose=verbose)
+    # Only process months needed for scoring and baseline fitting.
+    required_windows = list(windows)
+
+    if baseline is None:
+        required_windows.append((baseline_start, baseline_end))
+
+    # Preserve the previous unrestricted-reading behavior when no
+    # scoring windows are requested with an existing baseline.
+    selected_windows = required_windows if required_windows else None
+
+    counts = _read_and_count(root, dictionary_path, countries, verbose=verbose, windows=selected_windows)
 
     fitted_fresh = baseline is None
     if fitted_fresh:

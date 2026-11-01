@@ -154,7 +154,6 @@ def test_run_index_with_baseline_rejects_conflicting_baseline_arguments(tmp_path
             verbose=False,
         )
 
-
 def test_quick_index_resolves_one_country_and_one_calendar_year(tmp_path):
     _build_archive(tmp_path / "archive")
 
@@ -279,3 +278,224 @@ def test_rerun_raises_a_clear_error_without_a_stored_config(tmp_path):
 
     with pytest.raises(ValueError, match="rerun"):
         ni.rerun(plain_result)
+
+@pytest.mark.parametrize("reuse_baseline", [False, True], ids=["fresh", "reused"])
+def test_run_index_with_baseline_reads_only_required_months(
+    tmp_path, monkeypatch, reuse_baseline
+):
+    """Check that baseline scoring skips irrelevant archive months."""
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+
+    # Add two months outside the baseline and scoring windows.
+    for month in ("2015-06", "2024-06"):
+        _write(
+            archive / "Nigeria" / "The Punch" / month
+            / f"articles_The Punch_{month}.csv.gz",
+            [
+                f'The Punch,{month}-01,"Old fiscal policy uncertainty story",'
+                f'https://example.com/nigeria/{month}/old,body'
+            ],
+        )
+
+    baseline = None
+    if reuse_baseline:
+        keywords = ni.dictionary.load(DATA_DICTIONARY)
+        articles = ni.read_articles(archive)
+        counts = ni.index.count(ni.dedup.dedupe(articles), keywords)
+        baseline = ni.index.fit_baseline(
+            counts, start="2020-01", end="2020-02"
+        )
+
+    # Record every monthly article file opened.
+    import newsindex.articles as article_module
+
+    opened_months = []
+    original_read_one = article_module._read_one
+
+    def recording_read_one(file, country, encoding):
+        opened_months.append(file.parent.name)
+        return original_read_one(file, country, encoding)
+
+    monkeypatch.setattr(article_module, "_read_one", recording_read_one)
+
+    kwargs = (
+        {"baseline": baseline}
+        if reuse_baseline
+        else {"baseline_start": "2020-01", "baseline_end": "2020-02"}
+    )
+
+    result, _ = ni.run_index_with_baseline(
+        archive,
+        DATA_DICTIONARY,
+        windows=[("2020-03", "2020-03")],
+        countries=["Nigeria"],
+        verbose=False,
+        **kwargs,
+    )
+
+    assert set(result["window"]) == {"2020-03:2020-03"}
+
+    expected = (
+        {"2020-03"}
+        if reuse_baseline
+        else {"2020-01", "2020-02", "2020-03"}
+    )
+
+    assert set(opened_months) == expected, (
+        f"Opened {sorted(set(opened_months))}; "
+        f"expected only {sorted(expected)}"
+    )
+
+@pytest.mark.parametrize("reuse_baseline", [False, True], ids=["fresh", "reused"])
+def test_baseline_optimization_preserves_epu_values(tmp_path, monkeypatch, reuse_baseline):
+    """Selective month reading must produce identical EPU results."""
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+
+    # Include irrelevant months and a gap between the required periods.
+    for month in ("2015-06", "2022-06", "2024-06"):
+        _write(
+            archive / "Nigeria" / "The Punch" / month
+            / f"articles_The Punch_{month}.csv.gz",
+            [
+                f'The Punch,{month}-01,"Government fiscal policy creates uncertainty",'
+                f'https://example.com/nigeria/{month}/old,body'
+            ],
+        )
+
+    import newsindex.pipeline as pipeline
+
+    original_read_and_count = pipeline._read_and_count
+
+    # Simulate the original implementation by ignoring date windows.
+    def unfiltered_read_and_count(root, dictionary_path, countries, **kwargs):
+        kwargs.pop("windows", None)
+        return original_read_and_count(
+            root, dictionary_path, countries, **kwargs
+        )
+
+    kwargs = {
+        "windows": [("2020-03", "2020-03")],
+        "countries": ["Nigeria"],
+        "verbose": False,
+    }
+
+    if reuse_baseline:
+        keywords = ni.dictionary.load(DATA_DICTIONARY)
+        counts = ni.index.count(
+            ni.dedup.dedupe(ni.read_articles(archive)),
+            keywords,
+        )
+        baseline = ni.index.fit_baseline(
+            counts, start="2020-01", end="2020-02"
+        )
+        kwargs["baseline"] = baseline
+    else:
+        kwargs["baseline_start"] = "2020-01"
+        kwargs["baseline_end"] = "2020-02"
+
+    # Run the optimized implementation.
+    optimized_result, optimized_baseline = ni.run_index_with_baseline(
+        archive, DATA_DICTIONARY, **kwargs
+    )
+
+    # Run with the original, unrestricted archive-reading behavior.
+    with monkeypatch.context() as patch:
+        patch.setattr(pipeline, "_read_and_count", unfiltered_read_and_count)
+        original_result, original_baseline = ni.run_index_with_baseline(
+            archive, DATA_DICTIONARY, **kwargs
+        )
+
+    # Compare the actual EPU results.
+    pd.testing.assert_frame_equal(
+        optimized_result,
+        original_result,
+    )
+
+    # Compare baseline parameters when fitting a fresh baseline.
+    if not reuse_baseline:
+        assert optimized_baseline.start == original_baseline.start
+        assert optimized_baseline.end == original_baseline.end
+
+
+def test_run_index_with_baseline_skips_months_between_windows(
+    tmp_path, monkeypatch
+):
+    """Only baseline and scoring months should be opened."""
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+
+    # Add an irrelevant month between the requested periods.
+    for month in ("2020-06", "2022-01", "2024-06"):
+        _write(
+            archive / "Nigeria" / "The Punch" / month
+            / f"articles_The Punch_{month}.csv.gz",
+            [
+                f'The Punch,{month}-01,"Government fiscal policy uncertainty",'
+                f'https://example.com/nigeria/{month}/article,body'
+            ],
+        )
+
+    import newsindex.articles as article_module
+
+    opened_months = []
+    original_read_one = article_module._read_one
+
+    def recording_read_one(file, country, encoding):
+        opened_months.append(file.parent.name)
+        return original_read_one(file, country, encoding)
+
+    monkeypatch.setattr(
+        article_module, "_read_one", recording_read_one
+    )
+
+    result, _ = ni.run_index_with_baseline(
+        archive,
+        DATA_DICTIONARY,
+        windows=[
+            ("2020-03", "2020-03"),
+            ("2024-06", "2024-06"),
+        ],
+        baseline_start="2020-01",
+        baseline_end="2020-02",
+        countries=["Nigeria"],
+        verbose=False,
+    )
+
+    assert set(opened_months) == {
+        "2020-01",
+        "2020-02",
+        "2020-03",
+        "2024-06",
+    }
+
+    assert set(result["window"]) == {
+        "2020-03:2020-03",
+        "2024-06:2024-06",
+    }
+
+def test_run_index_with_baseline_empty_windows(tmp_path):
+    """An empty scoring-window list should be handled consistently."""
+    archive = tmp_path / "archive"
+    _build_archive(archive)
+
+    keywords = ni.dictionary.load(DATA_DICTIONARY)
+    articles = ni.read_articles(archive)
+    counts = ni.index.count(ni.dedup.dedupe(articles), keywords)
+
+    baseline = ni.index.fit_baseline(
+        counts, start="2020-01", end="2020-02"
+    )
+
+    result, returned_baseline = ni.run_index_with_baseline(
+        archive,
+        DATA_DICTIONARY,
+        windows=[],
+        baseline=baseline,
+        countries=["Nigeria"],
+        verbose=False,
+    )
+
+    assert result.empty
+    assert returned_baseline is baseline
